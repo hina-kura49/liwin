@@ -102,27 +102,25 @@ jobs:
           dbus-daemon --system --fork
           test -S /run/dbus/system_bus_socket
 
-      - name: Disable animations (experiment)
-        if: matrix.variant == 'pr2'
-        run: |
-          printf '[org.gnome.desktop.interface]\nenable-animations=false\n' \
-            >/usr/share/glib-2.0/schemas/99-liwin-e2e.gschema.override
-          glib-compile-schemas /usr/share/glib-2.0/schemas
-
       - name: Diagnostics watcher (temporary)
         run: |
           cat >/tmp/diag.sh <<'EOF'
           cd "$1"
           while ! [ -f .sandbox/env ]; do sleep 0.2; done
           . .sandbox/env
-          for i in $(seq 90); do
+          for i in $(seq 200); do
             date +%T.%N; target/debug/liwin list-windows
-            busctl --user call org.gnome.Shell /org/gnome/Shell org.freedesktop.DBus.Properties Get ss org.gnome.Shell OverviewActive
-            sleep 0.5
+            st=$(busctl --user get-property org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive 2>&1)
+            echo "overview: $st"
+            n=$(target/debug/liwin list-windows 2>/dev/null | grep -c .)
+            if [ "$st" = "b true" ] && { [ "$2" = early ] || [ "$n" -ge 2 ]; }; then
+              busctl --user set-property org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive b false; echo "set false: $?"
+            fi
+            sleep 0.2
           done
           EOF
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
-            bash /tmp/diag.sh "$GITHUB_WORKSPACE" >/tmp/diag.out 2>&1 &
+            bash /tmp/diag.sh "$GITHUB_WORKSPACE" ${{ matrix.variant == 'pr2' && 'late' || 'early' }} >/tmp/diag.out 2>&1 &
 
       - name: End-to-end test (just e2e)
         run: |

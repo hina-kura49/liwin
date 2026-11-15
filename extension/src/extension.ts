@@ -11,6 +11,7 @@ import {WindowCommands} from './commands.js';
 import {DaemonClient} from './daemon.js';
 import {WorkspaceIndicator} from './indicator.js';
 import {KeybindingManager} from './keybindings.js';
+import {PlacementAnimator} from './placementAnimator.js';
 import {WindowTracker} from './windows.js';
 
 class Liwin {
@@ -19,18 +20,25 @@ class Liwin {
     private readonly _commands: WindowCommands;
     private readonly _keys: KeybindingManager;
     private readonly _indicator: WorkspaceIndicator;
+    private readonly _animator = new PlacementAnimator();
 
     constructor() {
         this._indicator = new WorkspaceIndicator();
         this._keys = new KeybindingManager(id => this._daemon.keybindingTriggered(id));
         this._windows = new WindowTracker({
-            windowOpened: w => this._daemon.windowOpened(w),
+            windowOpened: w => {
+                this._animator.windowOpened(w[0]);
+                this._daemon.windowOpened(w);
+            },
             windowChanged: w => this._daemon.windowChanged(w),
-            windowClosed: id => this._daemon.windowClosed(id),
+            windowClosed: id => {
+                this._animator.windowClosed(id);
+                this._daemon.windowClosed(id);
+            },
             focusChanged: id => this._daemon.focusChanged(id),
             monitorsChanged: () => this._daemon.syncMonitors(this._windows.monitors()),
         });
-        this._commands = new WindowCommands(id => this._windows.find(id));
+        this._commands = new WindowCommands(id => this._windows.find(id), this._animator);
         this._daemon = new DaemonClient({
             onConnected: () => this._sendSnapshot(),
             onResyncRequested: () => this._sendSnapshot(),
@@ -57,6 +65,7 @@ class Liwin {
         this._daemon.destroy();
         this._keys.destroy();
         this._windows.destroy();
+        this._animator.destroy();
         this._indicator.destroy();
     }
 

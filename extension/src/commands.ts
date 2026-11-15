@@ -5,14 +5,20 @@
 
 import type Meta from 'gi://Meta';
 
+import type {PlacementAnimator} from './placementAnimator.js';
 import type {Placement} from './protocol.js';
 
 export class WindowCommands {
     private readonly _find: (id: number) => Meta.Window | null;
+    private readonly _animator: PlacementAnimator | null;
 
-    /** `find` resolves a window id among the windows reported to the daemon. */
-    constructor(find: (id: number) => Meta.Window | null) {
+    /**
+     * `find` resolves a window id among the windows reported to the daemon;
+     * `animator`, if given, animates moves (visual only).
+     */
+    constructor(find: (id: number) => Meta.Window | null, animator: PlacementAnimator | null = null) {
         this._find = find;
+        this._animator = animator;
     }
 
     /** Returns an error reason, or null on success. */
@@ -20,10 +26,12 @@ export class WindowCommands {
         const win = this._find(id);
         if (!win)
             return 'no-such-window';
+        const wasConstrained = win.is_fullscreen() || win.is_maximized();
         if (win.is_fullscreen())
             win.unmake_fullscreen();
         if (win.is_maximized())
             win.unmaximize();
+        this._animator?.beforeMove(win, x, y, wasConstrained);
         win.move_resize_frame(false, x, y, w, h);
         return null;
     }

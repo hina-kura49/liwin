@@ -43,11 +43,19 @@ async fn main() -> anyhow::Result<()> {
     for w in &warnings {
         tracing::warn!("{}: {w}", config_path.display());
     }
-    tracing::info!(
-        "config {} loaded ({} keybindings)",
-        config_path.display(),
-        keybindings.len()
-    );
+    if loaded.builtin {
+        tracing::info!(
+            "{} not found; using the built-in config ({} keybindings)",
+            config_path.display(),
+            keybindings.len()
+        );
+    } else {
+        tracing::info!(
+            "config {} loaded ({} keybindings)",
+            config_path.display(),
+            keybindings.len()
+        );
+    }
 
     let options = Options {
         enable_debug_commands: args.enable_debug_commands,

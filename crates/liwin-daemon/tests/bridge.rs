@@ -408,3 +408,26 @@ async fn keybinding_commands_run_in_sequence_and_stop_on_failure() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn builtin_bindings_reach_the_shell() {
+    let bus = Bus::start().await;
+    let loaded = liwin_daemon::config::builtin();
+    let options = Options {
+        keybindings: loaded.config.main_bindings(&mut Vec::new()),
+        ..Options::default()
+    };
+    let _daemon = bus.daemon(options).await;
+    let shell = bus.shell().await;
+    let mut tables = bridge_signals(&shell, "KeybindingsChanged").await;
+    hello_and_sync(&shell).await;
+    let (table,): (Vec<(u32, String)>,) = next_body(&mut tables).await;
+    assert_eq!(table.len(), 27);
+    assert_eq!(
+        table[0],
+        (0, "<Alt>1".to_owned()),
+        "bindings are sorted by key"
+    );
+    assert!(table.iter().any(|(_, a)| a == "<Alt><Shift>9"));
+    assert!(table.iter().any(|(_, a)| a == "<Alt>slash"));
+}

@@ -126,7 +126,13 @@ pub struct Loaded {
     pub config: Config,
     /// Human-readable warnings (unknown keys, unsupported bindings, ...).
     pub warnings: Vec<String>,
+    /// The file did not exist and [`BUILTIN`] was used instead.
+    pub builtin: bool,
 }
+
+/// Built-in config (AeroSpace-like default bindings), used when the config
+/// file does not exist.
+pub const BUILTIN: &str = include_str!("default-config.toml");
 
 /// `$XDG_CONFIG_HOME/liwin/liwin.toml`, falling back to `~/.config`.
 pub fn default_path() -> Option<PathBuf> {
@@ -145,14 +151,27 @@ pub fn parse(text: &str) -> Result<Loaded, String> {
         warnings.push(format!("unknown or unsupported key '{path}' ignored"));
     })
     .map_err(|e| e.to_string())?;
-    Ok(Loaded { config, warnings })
+    Ok(Loaded {
+        config,
+        warnings,
+        builtin: false,
+    })
 }
 
-/// Loads `path`. A missing file yields the default config.
+/// The built-in config.
+pub fn builtin() -> Loaded {
+    Loaded {
+        builtin: true,
+        ..parse(BUILTIN).expect("the built-in config is valid")
+    }
+}
+
+/// Loads `path`. A missing file yields the [built-in](BUILTIN) config; an
+/// existing one replaces it completely.
 pub fn load(path: &Path) -> Result<Loaded, String> {
     match std::fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|e| format!("{}: {e}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Loaded::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(builtin()),
         Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
@@ -432,9 +451,93 @@ mod tests {
         assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
+    fn binding_map(bindings: &[KeyBinding]) -> BTreeMap<String, (String, String)> {
+        bindings
+            .iter()
+            .map(|b| {
+                let cmds = b
+                    .commands
+                    .iter()
+                    .map(|c| c.join(" "))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                (b.key.clone(), (b.accelerator.clone(), cmds))
+            })
+            .collect()
+    }
+
     #[test]
-    fn missing_file_is_default() {
+    fn missing_file_uses_builtin_bindings() {
         let loaded = load(Path::new("/nonexistent/liwin/liwin.toml")).unwrap();
-        assert_eq!(loaded.config, Config::default());
+        assert!(loaded.builtin);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let mut warnings = Vec::new();
+        let bindings = loaded.config.main_bindings(&mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(bindings.len(), 4 + 4 + 1 + 9 + 9);
+        let map = binding_map(&bindings);
+        let get = |k: &str| map[k].clone();
+        let pair = |a: &str, c: &str| (a.to_owned(), c.to_owned());
+        assert_eq!(get("alt-h"), pair("<Alt>h", "focus left"));
+        assert_eq!(get("alt-j"), pair("<Alt>j", "focus down"));
+        assert_eq!(get("alt-k"), pair("<Alt>k", "focus up"));
+        assert_eq!(get("alt-l"), pair("<Alt>l", "focus right"));
+        assert_eq!(get("alt-shift-h"), pair("<Alt><Shift>h", "move left"));
+        assert_eq!(get("alt-shift-j"), pair("<Alt><Shift>j", "move down"));
+        assert_eq!(get("alt-shift-k"), pair("<Alt><Shift>k", "move up"));
+        assert_eq!(get("alt-shift-l"), pair("<Alt><Shift>l", "move right"));
+        assert_eq!(
+            get("alt-slash"),
+            pair("<Alt>slash", "layout tiles horizontal vertical")
+        );
+        for n in 1..=9 {
+            assert_eq!(
+                get(&format!("alt-{n}")),
+                pair(&format!("<Alt>{n}"), &format!("workspace {n}"))
+            );
+            assert_eq!(
+                get(&format!("alt-shift-{n}")),
+                pair(
+                    &format!("<Alt><Shift>{n}"),
+                    &format!("move-node-to-workspace {n}")
+                )
+            );
+        }
+        // Every built-in command is valid.
+        for b in &bindings {
+            for c in &b.commands {
+                crate::commands::parse(c).unwrap();
+            }
+        }
+        let l = loaded.config.layout_settings(&mut warnings);
+        assert_eq!(l, LayoutSettings::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn existing_file_without_bindings_has_none() {
+        let dir = std::env::temp_dir().join(format!("liwin-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("liwin.toml");
+        std::fs::write(&path, "config-version = 2\n[gaps]\ninner.horizontal = 4\n").unwrap();
+        let loaded = load(&path);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let loaded = loaded.unwrap();
+        assert!(!loaded.builtin);
+        assert!(loaded.config.main_bindings(&mut Vec::new()).is_empty());
+        // An empty file, too.
+        assert!(
+            parse("")
+                .unwrap()
+                .config
+                .main_bindings(&mut Vec::new())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn unreadable_file_is_an_error() {
+        // A directory cannot be read as a file.
+        assert!(load(&std::env::temp_dir()).is_err());
     }
 }

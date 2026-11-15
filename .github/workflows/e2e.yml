@@ -88,6 +88,14 @@ jobs:
             CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
             CARGO_TERM_COLOR=always just build
 
+      # GNOME Shell connects to the system bus at startup (login manager,
+      # time limits) and aborts without one; the container has no init.
+      - name: Start a system bus
+        run: |
+          mkdir -p /run/dbus
+          dbus-daemon --system --fork
+          test -S /run/dbus/system_bus_socket
+
       - name: End-to-end test (just e2e)
         run: |
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \

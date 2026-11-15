@@ -1,0 +1,96 @@
+name: Bug report
+description: Something in liwin does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Security problems must
+        **not** be reported here; see SECURITY.md for private reporting.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, starting from logging in (or `just nested`).
+      placeholder: |
+        1. Open two terminal windows on workspace 1
+        2. Press alt-l
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: liwin-version
+    attributes:
+      label: liwin version
+      description: Output of `liwin --version` and `liwin-daemon --version`, or the commit you built.
+      placeholder: liwin 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: shell-version
+    attributes:
+      label: GNOME Shell version
+      description: Output of `gnome-shell --version`.
+      placeholder: GNOME Shell 50.1
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+      description: Distribution and version (e.g. from `/etc/os-release`).
+      placeholder: Ubuntu 26.04
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Real session (extension installed with `just ext-install` or the release zip)
+        - Nested Shell (`just nested`)
+        - Headless Shell (`just e2e` / `just headless`)
+    validations:
+      required: true
+
+  - type: textarea
+    id: daemon-log
+    attributes:
+      label: liwin-daemon log
+      description: |
+        The daemon's output around the problem. In a nested Shell it is in
+        `.sandbox/daemon.log`; otherwise run `liwin-daemon` in a terminal
+        (`LIWIN_LOG=debug liwin-daemon` for more detail) or check wherever
+        you start it from (e.g. `journalctl --user`).
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: shell-log
+    attributes:
+      label: GNOME Shell log (optional)
+      description: |
+        Messages from the extension, e.g. `journalctl --user -b /usr/bin/gnome-shell | grep -i liwin`,
+        or `.sandbox/shell.log` in a nested Shell.
+      render: text
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (optional)
+      description: The relevant parts of `~/.config/liwin/liwin.toml`.
+      render: toml

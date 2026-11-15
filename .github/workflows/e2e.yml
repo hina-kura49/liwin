@@ -93,19 +93,31 @@ jobs:
       # GNOME Shell starts in the overview, and while the overview is shown
       # new windows do not get the focus, so `move left` has nothing to move
       # (seen on the hosted runners, not locally). Keep the overview hidden
-      # while the test runs.
+      # while the test runs. The helper sources .sandbox/env, so
+      # scripts/nested.sh reaps it at the end along with the sandbox.
       - name: End-to-end test (just e2e)
         run: |
           cat >/tmp/hide-overview.sh <<'EOF'
+          # Logs every change of overview/focus state to .sandbox/overview.out.
           cd "$1"
-          while ! [ -f .sandbox/env ]; do sleep 0.2; done
-          . .sandbox/env
           prop="org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive"
-          while [ -f .sandbox/env ]; do
-            if [ "$(busctl --user get-property $prop 2>/dev/null)" = "b true" ]; then
-              busctl --user set-property $prop b false && echo "e2e.yml: hid the overview"
+          last=
+          while :; do
+            # Re-read the env file every time: it may be half-written, or
+            # replaced by a new run.
+            if grep -q XDG_CACHE_HOME .sandbox/env 2>/dev/null; then
+              . ./.sandbox/env
+              st=$(busctl --user get-property $prop 2>&1)
+              if [ "$st" = "b true" ]; then
+                busctl --user set-property $prop b false 2>&1
+                st="b true -> hidden ($?)"
+              fi
+              f=$(target/debug/liwin list-windows 2>/dev/null | awk '$1=="*"{print $2}')
+              st="$st, focus: ${f:-none}"
+              [ "$st" = "$last" ] || echo "$(date +%T.%N) overview: $st" >>.sandbox/overview.out
+              last=$st
             fi
-            sleep 0.2
+            sleep 0.1
           done
           EOF
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \

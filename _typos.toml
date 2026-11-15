@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# typos configuration: https://github.com/crate-ci/typos
+
+[default]
+extend-ignore-re = [
+    # scripts/e2e.sh: grep pattern matching both "Error" and "error".
+    '\(rror\|failed\)',
+]

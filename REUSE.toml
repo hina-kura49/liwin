@@ -1,0 +1,31 @@
+version = 1
+SPDX-PackageName = "liwin"
+SPDX-PackageDownloadLocation = "https://github.com/hina-kura49/liwin"
+
+# Source files state their license in an SPDX-License-Identifier header; the
+# annotations below add the copyright notice to them ("aggregate") and cover
+# files that cannot (or do not yet) carry a header, such as JSON, lock files,
+# Markdown and Cargo manifests.
+
+# Everything outside extension/: Rust crates, docs, build and test tooling.
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 hina-kura49"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The GNOME Shell extension. Later annotations take priority over earlier ones.
+[[annotations]]
+path = "extension/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 hina-kura49"
+SPDX-License-Identifier = "GPL-2.0-or-later"
+
+# The Code of Conduct is the Contributor Covenant 2.1 text, which is published
+# under CC-BY-4.0 (https://www.contributor-covenant.org/). It is not ours to
+# relicense, so it overrides the annotations above.
+[[annotations]]
+path = "CODE_OF_CONDUCT.md"
+precedence = "override"
+SPDX-FileCopyrightText = "Contributor Covenant contributors"
+SPDX-License-Identifier = "CC-BY-4.0"

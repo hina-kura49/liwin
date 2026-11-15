@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# PRs are squash-merged, so the PR title becomes the commit on main that
+# release-please reads. Enforce Conventional Commits on it.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            test
+            ci
+            build
+            perf
+            chore
+            revert
+          requireScope: false
+          # Scopes are optional and free-form, e.g. "fix(daemon): ...".
+          subjectPattern: ^\S.*[^.]$
+          subjectPatternError: |
+            The subject "{subject}" of the PR title "{title}" must not be
+            empty and must not end with a period.

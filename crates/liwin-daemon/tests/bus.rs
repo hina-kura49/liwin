@@ -4,118 +4,13 @@
 //! A mock "GNOME Shell" connection owns `org.gnome.Shell.Introspect`, exactly
 //! like the real Shell does, and plays the extension's role.
 
-use std::process::Stdio;
+mod common;
+
 use std::time::Duration;
 
+use common::*;
 use futures_util::StreamExt;
-use liwin_daemon::{
-    BRIDGE_INTERFACE, BUS_NAME, DAEMON_INTERFACE, OBJECT_PATH, Options, SHELL_IDENTITY_NAME,
-    service,
-};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
-use zbus::message::Type;
-use zbus::{Connection, MatchRule, MessageStream};
-
-/// `(id, workspace, monitor, x, y, width, height, flags)`
-type Wire = (u64, u32, i32, i32, i32, i32, i32, u32);
-type Placement = (u64, i32, i32, i32, i32);
-
-struct Bus {
-    _child: Child,
-    address: String,
-}
-
-impl Bus {
-    async fn start() -> Bus {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
-            .stdout(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .expect("dbus-daemon must be installed to run these tests");
-        let stdout = child.stdout.take().unwrap();
-        let mut line = String::new();
-        BufReader::new(stdout).read_line(&mut line).await.unwrap();
-        Bus {
-            _child: child,
-            address: line.trim().to_owned(),
-        }
-    }
-
-    async fn connect(&self) -> Connection {
-        zbus::connection::Builder::address(self.address.as_str())
-            .build()
-            .await
-            .unwrap()
-    }
-
-    async fn daemon(&self, options: Options) -> Connection {
-        service::serve(
-            zbus::connection::Builder::address(self.address.as_str()),
-            options,
-        )
-        .await
-        .unwrap()
-    }
-
-    /// A connection posing as GNOME Shell.
-    async fn shell(&self) -> Connection {
-        zbus::connection::Builder::address(self.address.as_str())
-            .name(SHELL_IDENTITY_NAME)
-            .build()
-            .await
-            .unwrap()
-    }
-}
-
-fn debug_options() -> Options {
-    Options {
-        enable_debug_commands: true,
-        request_timeout: Duration::from_millis(500),
-        ..Options::default()
-    }
-}
-
-async fn call<B, R>(conn: &Connection, iface: &str, method: &str, body: &B) -> zbus::Result<R>
-where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
-    R: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,
-{
-    let reply = conn
-        .call_method(Some(BUS_NAME), OBJECT_PATH, Some(iface), method, body)
-        .await?;
-    reply.body().deserialize::<R>()
-}
-
-async fn run(conn: &Connection, args: &[&str]) -> zbus::Result<String> {
-    call(conn, DAEMON_INTERFACE, "RunCommand", &(args,)).await
-}
-
-fn error_name(e: &zbus::Error) -> String {
-    match e {
-        zbus::Error::MethodError(name, _, _) => name.to_string(),
-        other => format!("{other:?}"),
-    }
-}
-
-async fn hello_and_sync(shell: &Connection) {
-    let v: u32 = call(shell, BRIDGE_INTERFACE, "Hello", &(2u32,))
-        .await
-        .unwrap();
-    assert_eq!(v, 2);
-    let monitors: Vec<(i32, i32, i32, i32, i32)> = vec![(0, 0, 32, 1920, 1048)];
-    let () = call(shell, BRIDGE_INTERFACE, "SyncMonitors", &(monitors,))
-        .await
-        .unwrap();
-    let windows: Vec<Wire> = vec![
-        (11, 0, 0, 100, 100, 640, 480, 0),
-        (22, 0, 0, 200, 200, 640, 480, 0),
-    ];
-    let () = call(shell, BRIDGE_INTERFACE, "SyncWindows", &(22u64, windows))
-        .await
-        .unwrap();
-}
+use liwin_daemon::{BRIDGE_INTERFACE, BUS_NAME, DAEMON_INTERFACE, OBJECT_PATH, Options, service};
 
 #[tokio::test]
 async fn daemon_owns_its_bus_name() {
@@ -209,19 +104,6 @@ async fn debug_commands_are_off_by_default() {
         .await
         .unwrap_err();
     assert_eq!(error_name(&err), "io.github.liwin.Error.InvalidCommand");
-}
-
-async fn bridge_signals(conn: &Connection, member: &'static str) -> MessageStream {
-    let rule = MatchRule::builder()
-        .msg_type(Type::Signal)
-        .sender(BUS_NAME)
-        .interface(BRIDGE_INTERFACE)
-        .member(member)
-        .build()
-        .unwrap();
-    MessageStream::for_match_rule(rule, conn, None)
-        .await
-        .unwrap()
 }
 
 #[tokio::test]
@@ -399,29 +281,6 @@ async fn keybindings_are_sent_after_sync_and_trigger_commands() {
         again.is_err(),
         "keybinding table must be sent once per Hello"
     );
-}
-
-async fn next_body<T>(stream: &mut MessageStream) -> T
-where
-    T: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,
-{
-    let msg = tokio::time::timeout(Duration::from_secs(2), stream.next())
-        .await
-        .expect("signal within 2s")
-        .unwrap()
-        .unwrap();
-    msg.body().deserialize::<T>().unwrap()
-}
-
-async fn ack(shell: &Connection, req: u32) {
-    let () = call(
-        shell,
-        BRIDGE_INTERFACE,
-        "RequestCompleted",
-        &(req, true, ""),
-    )
-    .await
-    .unwrap();
 }
 
 #[tokio::test]

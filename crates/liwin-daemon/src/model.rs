@@ -395,6 +395,66 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_window_update_does_not_relayout() {
+        let mut m = model();
+        m.window_opened(win(1, 0));
+        m.take_layout();
+        let mut moved = win(1, 0);
+        moved.rect = Rect::new(3, 4, 5, 6);
+        m.window_opened(moved);
+        assert!(m.take_layout().is_empty());
+        assert_eq!(m.windows[&1].rect, Rect::new(3, 4, 5, 6));
+    }
+
+    #[test]
+    fn windows_on_all_workspaces_get_their_own_tree() {
+        let mut m = model();
+        m.sync_windows(Some(1), [win(1, ALL_WORKSPACES), win(2, 0)]);
+        assert_eq!(m.trees[&(ALL_WORKSPACES, 0)].dump(), "h[*1]");
+        assert_eq!(m.trees[&(0, 0)].dump(), "h[*2]");
+    }
+
+    #[test]
+    fn floating_toggle_moves_window_in_and_out_of_its_tree() {
+        let mut m = model();
+        m.sync_windows(Some(1), [win(1, 0), win(2, 0)]);
+        let mut floating = win(2, 0);
+        floating.floating = true;
+        m.window_opened(floating);
+        assert_eq!(m.trees[&(0, 0)].windows(), vec![1]);
+        m.window_opened(win(2, 0));
+        assert_eq!(m.trees[&(0, 0)].windows(), vec![1, 2]);
+    }
+
+    #[test]
+    fn monitor_sync_relayouts_every_tree() {
+        let mut m = model();
+        m.sync_windows(None, [win(1, 0), win(2, 1)]);
+        m.take_layout();
+        m.sync_monitors([Monitor {
+            index: 0,
+            work_area: Rect::new(0, 0, 400, 300),
+        }]);
+        assert_eq!(
+            m.take_layout(),
+            vec![
+                (1, Rect::new(0, 0, 400, 300)),
+                (2, Rect::new(0, 0, 400, 300))
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_forgets_everything() {
+        let mut m = model();
+        m.sync_windows(Some(1), [win(1, 0)]);
+        m.clear();
+        assert!(m.windows.is_empty() && m.trees.is_empty() && m.monitors.is_empty());
+        assert_eq!(m.focused, None);
+        assert!(m.take_layout().is_empty());
+    }
+
+    #[test]
     fn auto_orientation_follows_monitor_aspect() {
         let mut m = Model::new(LayoutSettings::default());
         m.sync_monitors([Monitor {

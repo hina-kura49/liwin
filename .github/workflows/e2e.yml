@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# End-to-end test: a headless nested GNOME Shell 50 with the extension and
+# the daemon (`just e2e` -> scripts/e2e.sh), in an Ubuntu 26.04 container so
+# that the Shell is the version the extension targets.
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, test/core-properties-and-ci]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  DEBIAN_FRONTEND: noninteractive
+  LANG: C.UTF-8
+  # The test runs as an unprivileged user (a Wayland session as root is not
+  # what the scripts are written for); its toolchain lives in its home.
+  E2E_USER: e2e
+  E2E_HOME: /home/e2e
+  CARGO_HOME: /home/e2e/.cargo
+  RUSTUP_HOME: /home/e2e/.rustup
+
+jobs:
+  e2e:
+    name: E2E (GNOME Shell 50, headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ubuntu:26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [current, pr2]
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config just \
+            gnome-shell gnome-text-editor \
+            dbus dbus-daemon dbus-user-session libglib2.0-bin \
+            gsettings-desktop-schemas \
+            libgl1-mesa-dri libegl-mesa0 libgles2 mesa-vulkan-drivers \
+            systemd procps util-linux fuse3 \
+            fonts-dejavu-core adwaita-icon-theme
+          gnome-shell --version
+
+      - uses: actions/checkout@v4
+
+      - name: Use PR 2 nested.sh (temporary)
+        if: matrix.variant == 'pr2'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --depth=1 origin fix/nested-runtime-dir-path
+          git checkout FETCH_HEAD -- scripts/nested.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Create the test user
+        run: |
+          useradd --create-home --home-dir "$E2E_HOME" --shell /bin/bash "$E2E_USER"
+          uid=$(id -u "$E2E_USER")
+          install -d -m 700 -o "$E2E_USER" -g "$E2E_USER" "/run/user/$uid"
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >>"$GITHUB_ENV"
+
+      - name: Install Rust (stable) for the test user
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          chown -R "$E2E_USER:" "$GITHUB_WORKSPACE"
+          runuser -u "$E2E_USER" -- env HOME="$E2E_HOME" CARGO_HOME="$CARGO_HOME" \
+            RUSTUP_HOME="$RUSTUP_HOME" sh /tmp/rustup.sh -y --profile minimal \
+            --default-toolchain stable --no-modify-path
+          echo "$CARGO_HOME/bin" >>"$GITHUB_PATH"
+
+      - name: Build (just build)
+        run: |
+          runuser -u "$E2E_USER" -- env HOME="$E2E_HOME" PATH="$PATH" \
+            CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
+            CARGO_TERM_COLOR=always just build
+
+      - name: End-to-end test (just e2e)
+        run: |
+          runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
+            USER="$E2E_USER" LOGNAME="$E2E_USER" LANG="$LANG" \
+            CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
+            XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            just e2e
+
+      - name: Upload sandbox logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-${{ matrix.variant }}
+          include-hidden-files: true
+          if-no-files-found: ignore
+          path: |
+            .sandbox/*.log
+            .sandbox/*.out

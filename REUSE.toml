@@ -20,3 +20,12 @@ path = "extension/**"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 hina-kura49"
 SPDX-License-Identifier = "GPL-2.0-or-later"
+
+# The Code of Conduct is the Contributor Covenant 2.1 text, which is published
+# under CC-BY-4.0 (https://www.contributor-covenant.org/). It is not ours to
+# relicense, so it overrides the annotations above.
+[[annotations]]
+path = "CODE_OF_CONDUCT.md"
+precedence = "override"
+SPDX-FileCopyrightText = "Contributor Covenant contributors"
+SPDX-License-Identifier = "CC-BY-4.0"

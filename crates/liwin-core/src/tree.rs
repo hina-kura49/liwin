@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The per-workspace container tree.
 //!
 //! A workspace is a tree whose inner nodes are split containers (horizontal or

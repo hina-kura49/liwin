@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! D-Bus errors returned by the daemon (`io.github.liwin.Error.*`).
 
 use zbus::DBusError;

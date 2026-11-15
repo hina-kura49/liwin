@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Global keybindings via global.display.grab_accelerator(), the same
 // mechanism GNOME Shell's own GrabAccelerator D-Bus API uses
 // (js/ui/shellDBus.js). Unlike Main.wm.addKeybinding() it needs no GSettings

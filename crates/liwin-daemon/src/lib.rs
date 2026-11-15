@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! liwin daemon library: the D-Bus service and the window model behind it.
 //!
 //! The binary (`main.rs`) only parses arguments and connects to the session

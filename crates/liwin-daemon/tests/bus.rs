@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests against a private `dbus-daemon`.
 //!
 //! A mock "GNOME Shell" connection owns `org.gnome.Shell.Introspect`, exactly

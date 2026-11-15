@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `io.github.liwin.ShellBridge1`: the interface used by the GNOME Shell
 //! extension. See `docs/dbus.md`.
 

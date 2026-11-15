@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Command language shared by the CLI and keybindings (AeroSpace-like).
 
 use liwin_core::{Direction, Rect, WindowId};

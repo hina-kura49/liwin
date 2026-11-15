@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # liwin task runner. `just --list` shows all recipes.
 
 uuid := "liwin@kura"

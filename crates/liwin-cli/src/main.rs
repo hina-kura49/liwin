@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `liwin`: forwards its arguments to the daemon's `RunCommand` and prints
 //! the reply. All parsing happens in the daemon, so the CLI and keybindings
 //! share one command language.

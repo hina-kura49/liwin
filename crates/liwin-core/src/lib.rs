@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Pure window-tree and layout logic for liwin.
 //!
 //! This crate has no knowledge of GNOME, Wayland or D-Bus. It models each

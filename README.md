@@ -60,3 +60,24 @@ alt-l = 'focus right'
 
 Keys already used by GNOME are skipped (never stolen) and reported in the
 daemon log.
+
+## License
+
+liwin is made of parts under different licenses:
+
+| Part | License | License files |
+|------|---------|---------------|
+| GNOME Shell extension (`extension/`) | `GPL-2.0-or-later` | [LICENSE-GPL-2.0](LICENSE-GPL-2.0) |
+| Rust crates (`crates/`: liwin-core, liwin-daemon, liwin-cli) | `MIT OR Apache-2.0`, at your option | [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) |
+| Build and test tooling (`justfile`, `scripts/`) | `MIT OR Apache-2.0`, at your option | [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) |
+
+Each source file carries an `SPDX-License-Identifier` header stating its
+license.
+
+The extension runs inside GNOME Shell, which is GPL-2.0-or-later. The daemon
+and CLI are separate programs that talk to it only over D-Bus.
+
+Unless you explicitly state otherwise, any contribution you intentionally
+submit for inclusion in the Rust crates, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.

@@ -3,6 +3,7 @@ name = "liwin-cli"
 description = "Command-line client for the liwin daemon"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "liwin"

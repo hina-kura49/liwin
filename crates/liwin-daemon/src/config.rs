@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Configuration: `~/.config/liwin/liwin.toml`.
 //!
 //! Key names follow AeroSpace's `~/.aerospace.toml` so that a subset of an

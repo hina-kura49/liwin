@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Thin GNOME Shell extension for liwin",
+  "license": "GPL-2.0-or-later",
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit"

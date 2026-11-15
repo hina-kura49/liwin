@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Observes Meta windows and executes primitive window commands.
 // No layout logic lives here.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Runs a nested GNOME Shell with the liwin extension and daemon, isolated
 # from the logged-in session:
 #   - a private session bus (dbus-run-session),

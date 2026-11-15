@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // liwin GNOME Shell extension entry point.
 //
 // A thin layer: it reports windows to liwin-daemon, executes the daemon's

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Client side of io.github.liwin.ShellBridge1 (see docs/dbus.md).
 //
 // Rules: this module exports nothing on D-Bus and never blocks. Every call is

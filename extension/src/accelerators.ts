@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Detects accelerators already used by GNOME's own keybindings.
 //
 // global.display.grab_accelerator() is supposed to refuse combos that are

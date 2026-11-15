@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Service wiring: shared state, the public `Daemon1` interface, and startup.
 
 use std::collections::HashMap;

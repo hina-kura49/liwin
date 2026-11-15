@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Runs inside the private session bus created by scripts/nested.sh.
 set -euo pipefail
 sb="$LIWIN_SANDBOX"

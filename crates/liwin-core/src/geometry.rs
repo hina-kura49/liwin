@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Basic geometric types.
 
 /// Axis along which a container lays out its children.

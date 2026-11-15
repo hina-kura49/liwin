@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The daemon's view of the Shell: monitors, windows and per-workspace trees.
 //!
 //! The extension is the source of truth for which windows exist and where they

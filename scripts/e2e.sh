@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # End-to-end "hello world": start a headless nested GNOME Shell with the
 # extension and the daemon, open a window, move it with the CLI, and check
 # its new geometry as reported back by the extension.

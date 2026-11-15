@@ -201,7 +201,10 @@ Neither side requires the other to be running first:
 - The nested Shell runs without an input method: `ibus-daemon` is shadowed by
   a no-op in `.sandbox/bin` and input sources are set to `xkb us`. A nested
   IBus shares the user's IME backend and broke conversion in practice.
-- The headless Shell also gets its own `XDG_RUNTIME_DIR` (`.sandbox/run`):
+- The headless Shell also gets its own `XDG_RUNTIME_DIR` (a short-named
+  `liwin-nested.XXXXXX` subdirectory of the user's runtime dir, removed on
+  exit; a path inside the checkout can exceed the 108-byte limit for Wayland
+  socket paths):
   GNOME Shell keeps a crash sentinel (`gnome-shell-disable-extensions`) there
   for its first 60 s, and the logged-in session's systemd unit would disable
   the user's extensions if *that* Shell crashed meanwhile. The devkit window

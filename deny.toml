@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# liwin only targets Linux; ignore dependencies that only apply elsewhere
+# (e.g. windows-sys, r-efi).
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+# Fail on any RustSec vulnerability, and on unmaintained/unsound/yanked crates.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Only what the dependency tree needs. All of these are permissive and can be
+# redistributed as part of crates licensed `MIT OR Apache-2.0`.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    # unicode-ident (Unicode data tables).
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+unused-allowed-license = "deny"
+
+[licenses.private]
+ignore = false
+
+[bans]
+# Only report duplicate versions; do not fail on them. Wildcards are allowed
+# because the workspace crates refer to each other by path only.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

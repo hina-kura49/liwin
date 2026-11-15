@@ -39,23 +39,36 @@ async fn main() -> anyhow::Result<()> {
         .or_else(config::default_path)
         .context("cannot determine the config path (set $HOME or pass --config)")?;
     let loaded = config::load(&config_path).map_err(anyhow::Error::msg)?;
-    let mut warnings = loaded.warnings;
-    let keybindings = loaded.config.main_bindings(&mut warnings);
-    let layout = loaded.config.layout_settings(&mut warnings);
+    let (
+        config::Settings {
+            keybindings,
+            layout,
+        },
+        warnings,
+    ) = loaded.settings();
     for w in &warnings {
         tracing::warn!("{}: {w}", config_path.display());
     }
-    tracing::info!(
-        "config {} loaded ({} keybindings)",
-        config_path.display(),
-        keybindings.len()
-    );
+    if loaded.builtin {
+        tracing::info!(
+            "{} not found; using the built-in config ({} keybindings)",
+            config_path.display(),
+            keybindings.len()
+        );
+    } else {
+        tracing::info!(
+            "config {} loaded ({} keybindings)",
+            config_path.display(),
+            keybindings.len()
+        );
+    }
 
     let options = Options {
         enable_debug_commands: args.enable_debug_commands,
         request_timeout: Duration::from_millis(args.request_timeout_ms),
         keybindings,
         layout,
+        config_path: Some(config_path),
     };
 
     let _conn = service::serve(zbus::connection::Builder::session(), options)

@@ -41,6 +41,15 @@ impl Command {
             Command::DebugMoveWindow { .. } | Command::DebugTree | Command::DebugResync
         )
     }
+
+    /// Whether the command fails with `ShellNotConnected` when no Shell is
+    /// connected. Read-only commands work without one.
+    pub fn needs_shell(&self) -> bool {
+        !matches!(
+            self,
+            Command::Help | Command::ListWindows | Command::DebugTree
+        )
+    }
 }
 
 pub const USAGE: &str = "\

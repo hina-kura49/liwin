@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Service wiring: shared state, the public `Daemon1` interface, and startup.
+//! Command execution lives in [`crate::exec`].
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -13,8 +14,9 @@ use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
 
 use crate::bridge::{ShellBridge, ShellBridgeSignals};
-use crate::commands::{self, Command, LayoutChange};
-use crate::model::{ALL_WORKSPACES, Model};
+use crate::commands;
+use crate::config::KeyBinding;
+use crate::model::Model;
 use crate::{BUS_NAME, LiwinError, OBJECT_PATH, Options};
 
 type RequestResult = Result<(), String>;
@@ -27,6 +29,8 @@ pub struct State {
     pub model: Model,
     /// Whether the keybinding table was sent to the current Shell peer.
     pub keybindings_sent: bool,
+    /// Live keybindings of the `main` mode; a binding's id is its index.
+    pub keybindings: Vec<KeyBinding>,
     next_request_id: u32,
     pending: HashMap<u32, oneshot::Sender<RequestResult>>,
 }
@@ -47,21 +51,41 @@ impl State {
             let _ = tx.send(result);
         }
     }
+
+    /// Registers a new pending request and returns its id.
+    fn new_request(&mut self) -> (u32, oneshot::Receiver<RequestResult>) {
+        let id = self.next_request_id;
+        self.next_request_id = self.next_request_id.wrapping_add(1).max(1);
+        let (tx, rx) = oneshot::channel();
+        self.pending.insert(id, tx);
+        (id, rx)
+    }
+}
+
+/// A signal emitter whose signals are unicast to `peer`.
+pub(crate) fn unicast(
+    conn: &Connection,
+    peer: OwnedUniqueName,
+) -> zbus::Result<SignalEmitter<'static>> {
+    Ok(SignalEmitter::new(conn, OBJECT_PATH)?.set_destination(BusName::Unique(peer.into())))
 }
 
 /// State shared by both interfaces and background tasks.
 #[derive(Debug)]
 pub struct Shared {
+    /// Startup options. `keybindings` is moved into [`State`] and `layout`
+    /// into the [`Model`], where a config reload updates them.
     pub options: Options,
     state: Mutex<State>,
 }
 
 impl Shared {
-    pub fn new(options: Options) -> Self {
+    pub fn new(mut options: Options) -> Self {
         Self {
             state: Mutex::new(State {
                 shell_peer: None,
                 keybindings_sent: false,
+                keybindings: std::mem::take(&mut options.keybindings),
                 model: Model::new(options.layout),
                 next_request_id: 1,
                 pending: HashMap::new(),
@@ -75,42 +99,42 @@ impl Shared {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn shell_peer(&self) -> Result<OwnedUniqueName, LiwinError> {
+    /// The authenticated Shell, or `ShellNotConnected`.
+    pub(crate) fn shell_peer(&self) -> Result<OwnedUniqueName, LiwinError> {
         self.state().shell_peer.clone().ok_or_else(|| {
             LiwinError::ShellNotConnected("the GNOME Shell extension is not connected".into())
         })
     }
 
+    /// An emitter for unicast signals to the authenticated Shell.
+    pub(crate) fn shell_emitter(
+        &self,
+        conn: &Connection,
+    ) -> Result<SignalEmitter<'static>, LiwinError> {
+        Ok(unicast(conn, self.shell_peer()?)?)
+    }
+
     /// Emits a command signal to the Shell and waits for `RequestCompleted`.
-    async fn request<F, Fut>(&self, conn: &Connection, emit: F) -> Result<(), LiwinError>
+    pub(crate) async fn request<F, Fut>(&self, conn: &Connection, emit: F) -> Result<(), LiwinError>
     where
         F: FnOnce(SignalEmitter<'static>, u32) -> Fut,
         Fut: Future<Output = zbus::Result<()>>,
     {
-        let peer = self.shell_peer()?;
-        let (id, rx) = {
-            let mut st = self.state();
-            let id = st.next_request_id;
-            st.next_request_id = st.next_request_id.wrapping_add(1).max(1);
-            let (tx, rx) = oneshot::channel();
-            st.pending.insert(id, tx);
-            (id, rx)
-        };
-        let emitter =
-            SignalEmitter::new(conn, OBJECT_PATH)?.set_destination(BusName::Unique(peer.into()));
+        let emitter = self.shell_emitter(conn)?;
+        let (id, rx) = self.state().new_request();
         if let Err(e) = emit(emitter, id).await {
             self.state().pending.remove(&id);
             return Err(e.into());
         }
-        match tokio::time::timeout(self.options.request_timeout, rx).await {
+        let timeout = self.options.request_timeout;
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(Ok(()))) => Ok(()),
             Ok(Ok(Err(reason))) => Err(LiwinError::Failed(reason)),
             Ok(Err(_)) => Err(LiwinError::Failed("request dropped".into())),
             Err(_) => {
                 self.state().pending.remove(&id);
                 Err(LiwinError::Timeout(format!(
-                    "the extension did not answer request {id} within {:?}",
-                    self.options.request_timeout
+                    "the extension did not answer request {id} within {timeout:?}"
                 )))
             }
         }
@@ -133,10 +157,7 @@ impl Shared {
             .into_iter()
             .map(|(id, r)| (id, r.x, r.y, r.width, r.height))
             .collect();
-        SignalEmitter::new(conn, OBJECT_PATH)?
-            .set_destination(BusName::Unique(peer.into()))
-            .apply_layout(batch)
-            .await?;
+        unicast(conn, peer)?.apply_layout(batch).await?;
         Ok(())
     }
 
@@ -163,154 +184,6 @@ impl Shared {
                 .await
         })
         .await
-    }
-
-    /// Runs one command and returns its textual output.
-    pub async fn run(&self, conn: &Connection, command: Command) -> Result<String, LiwinError> {
-        if command.is_debug() && !self.options.enable_debug_commands {
-            return Err(LiwinError::InvalidCommand(
-                "debug commands are disabled (start liwin-daemon with --enable-debug-commands)"
-                    .into(),
-            ));
-        }
-        match command {
-            Command::Help => Ok(commands::USAGE.to_owned()),
-            Command::ListWindows => Ok(self.list_windows()),
-            Command::DebugTree => Ok(self.dump_trees()),
-            Command::DebugResync => {
-                let peer = self.shell_peer()?;
-                SignalEmitter::new(conn, OBJECT_PATH)?
-                    .set_destination(BusName::Unique(peer.into()))
-                    .resync_requested()
-                    .await?;
-                Ok(String::new())
-            }
-            Command::Focus(direction) => {
-                self.shell_peer()?;
-                let target = {
-                    let mut st = self.state();
-                    let Some((_, tree)) = st.model.focused_tree_mut() else {
-                        return Ok(String::new());
-                    };
-                    let moved = tree
-                        .focus(direction)
-                        .map_err(|e| LiwinError::Failed(e.to_string()))?;
-                    if !moved {
-                        return Ok(String::new());
-                    }
-                    tree.focused()
-                };
-                if let Some(target) = target {
-                    self.focus_window(conn, target).await?;
-                }
-                Ok(String::new())
-            }
-            Command::Move(direction) => {
-                self.shell_peer()?;
-                {
-                    let mut st = self.state();
-                    let Some((key, tree)) = st.model.focused_tree_mut() else {
-                        return Ok(String::new());
-                    };
-                    let moved = tree
-                        .move_focused(direction)
-                        .map_err(|e| LiwinError::Failed(e.to_string()))?;
-                    if !moved {
-                        return Ok(String::new());
-                    }
-                    st.model.mark_dirty(key);
-                }
-                self.flush_layout(conn).await?;
-                Ok(String::new())
-            }
-            Command::Layout(change) => {
-                self.shell_peer()?;
-                {
-                    let mut st = self.state();
-                    let Some((key, tree)) = st.model.focused_tree_mut() else {
-                        return Ok(String::new());
-                    };
-                    let current = tree
-                        .focused_container_orientation()
-                        .map_err(|e| LiwinError::Failed(e.to_string()))?;
-                    let wanted = match change {
-                        LayoutChange::Toggle => current.flipped(),
-                        LayoutChange::Set(o) => o,
-                    };
-                    if wanted != current {
-                        tree.toggle_orientation()
-                            .map_err(|e| LiwinError::Failed(e.to_string()))?;
-                        st.model.mark_dirty(key);
-                    }
-                }
-                self.flush_layout(conn).await?;
-                Ok(String::new())
-            }
-            Command::Workspace(index) => {
-                self.request(conn, |e, id| async move {
-                    e.activate_workspace(id, index).await
-                })
-                .await?;
-                Ok(String::new())
-            }
-            Command::MoveNodeToWorkspace(index) => {
-                self.shell_peer()?;
-                let Some(window) = self.state().model.focused else {
-                    return Ok(String::new());
-                };
-                self.request(conn, |e, id| async move {
-                    e.move_window_to_workspace(id, window, index).await
-                })
-                .await?;
-                Ok(String::new())
-            }
-            Command::DebugMoveWindow { window, rect } => {
-                self.shell_peer()?;
-                if !self.state().model.windows.contains_key(&window) {
-                    return Err(LiwinError::Failed(format!("unknown window {window}")));
-                }
-                self.move_resize_window(conn, window, rect).await?;
-                Ok("ok".into())
-            }
-        }
-    }
-
-    fn list_windows(&self) -> String {
-        let st = self.state();
-        let m = &st.model;
-        m.windows
-            .values()
-            .map(|w| {
-                let mark = if m.focused == Some(w.id) { "*" } else { " " };
-                let workspace = if w.workspace == ALL_WORKSPACES {
-                    "all".to_owned()
-                } else {
-                    (w.workspace + 1).to_string()
-                };
-                let floating = if w.floating { " floating" } else { "" };
-                format!(
-                    "{mark} {:<12} workspace={workspace} monitor={} {}x{}+{}+{}{floating}",
-                    w.id, w.monitor, w.rect.width, w.rect.height, w.rect.x, w.rect.y
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn dump_trees(&self) -> String {
-        let st = self.state();
-        st.model
-            .trees
-            .iter()
-            .map(|((ws, mon), t)| {
-                format!(
-                    "workspace {} monitor {mon}: {}",
-                    ws.wrapping_add(1),
-                    t.dump()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 }
 
@@ -350,7 +223,15 @@ pub async fn serve(
     builder: zbus::connection::Builder<'_>,
     options: Options,
 ) -> anyhow::Result<Connection> {
-    let shared = Arc::new(Shared::new(options));
+    serve_shared(builder, Arc::new(Shared::new(options))).await
+}
+
+/// Like [`serve`], with state the caller keeps a handle to (e.g. to reload
+/// the config).
+pub async fn serve_shared(
+    builder: zbus::connection::Builder<'_>,
+    shared: Arc<Shared>,
+) -> anyhow::Result<Connection> {
     let conn = builder
         .serve_at(
             OBJECT_PATH,

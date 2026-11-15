@@ -120,6 +120,22 @@ impl Model {
         }
     }
 
+    pub fn settings(&self) -> LayoutSettings {
+        self.settings
+    }
+
+    /// Replaces the layout settings. Returns whether they changed; if so,
+    /// every tree is re-laid out with the new gaps. Existing trees keep
+    /// their orientation; a new root orientation applies to new trees.
+    pub fn set_settings(&mut self, settings: LayoutSettings) -> bool {
+        if settings == self.settings {
+            return false;
+        }
+        self.settings = settings;
+        self.dirty.extend(self.trees.keys().copied());
+        true
+    }
+
     pub fn clear(&mut self) {
         self.monitors.clear();
         self.windows.clear();
@@ -392,6 +408,93 @@ mod tests {
             ]
         );
         assert_eq!(m.windows[&1].rect, Rect::new(5, 5, 495, 500));
+    }
+
+    #[test]
+    fn unchanged_window_update_does_not_relayout() {
+        let mut m = model();
+        m.window_opened(win(1, 0));
+        m.take_layout();
+        let mut moved = win(1, 0);
+        moved.rect = Rect::new(3, 4, 5, 6);
+        m.window_opened(moved);
+        assert!(m.take_layout().is_empty());
+        assert_eq!(m.windows[&1].rect, Rect::new(3, 4, 5, 6));
+    }
+
+    #[test]
+    fn windows_on_all_workspaces_get_their_own_tree() {
+        let mut m = model();
+        m.sync_windows(Some(1), [win(1, ALL_WORKSPACES), win(2, 0)]);
+        assert_eq!(m.trees[&(ALL_WORKSPACES, 0)].dump(), "h[*1]");
+        assert_eq!(m.trees[&(0, 0)].dump(), "h[*2]");
+    }
+
+    #[test]
+    fn floating_toggle_moves_window_in_and_out_of_its_tree() {
+        let mut m = model();
+        m.sync_windows(Some(1), [win(1, 0), win(2, 0)]);
+        let mut floating = win(2, 0);
+        floating.floating = true;
+        m.window_opened(floating);
+        assert_eq!(m.trees[&(0, 0)].windows(), vec![1]);
+        m.window_opened(win(2, 0));
+        assert_eq!(m.trees[&(0, 0)].windows(), vec![1, 2]);
+    }
+
+    #[test]
+    fn monitor_sync_relayouts_every_tree() {
+        let mut m = model();
+        m.sync_windows(None, [win(1, 0), win(2, 1)]);
+        m.take_layout();
+        m.sync_monitors([Monitor {
+            index: 0,
+            work_area: Rect::new(0, 0, 400, 300),
+        }]);
+        assert_eq!(
+            m.take_layout(),
+            vec![
+                (1, Rect::new(0, 0, 400, 300)),
+                (2, Rect::new(0, 0, 400, 300))
+            ]
+        );
+    }
+
+    #[test]
+    fn new_settings_relayout_every_tree() {
+        let mut m = model();
+        m.sync_windows(None, [win(1, 0), win(2, 1)]);
+        m.take_layout();
+        assert!(!m.set_settings(LayoutSettings::default()));
+        assert!(m.take_layout().is_empty());
+        let gaps = LayoutSettings {
+            outer: OuterGaps {
+                left: 10,
+                top: 10,
+                right: 10,
+                bottom: 10,
+            },
+            ..LayoutSettings::default()
+        };
+        assert!(m.set_settings(gaps));
+        assert_eq!(m.settings(), gaps);
+        assert_eq!(
+            m.take_layout(),
+            vec![
+                (1, Rect::new(10, 10, 980, 480)),
+                (2, Rect::new(10, 10, 980, 480))
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_forgets_everything() {
+        let mut m = model();
+        m.sync_windows(Some(1), [win(1, 0)]);
+        m.clear();
+        assert!(m.windows.is_empty() && m.trees.is_empty() && m.monitors.is_empty());
+        assert_eq!(m.focused, None);
+        assert!(m.take_layout().is_empty());
     }
 
     #[test]

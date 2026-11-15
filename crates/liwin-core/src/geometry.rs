@@ -69,6 +69,17 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// Shrinks the rectangle by the given amounts on each side, keeping at
+    /// least 1×1 pixel.
+    pub fn inset(self, left: i32, top: i32, right: i32, bottom: i32) -> Rect {
+        Rect::new(
+            self.x + left,
+            self.y + top,
+            (self.width - left - right).max(1),
+            (self.height - top - bottom).max(1),
+        )
+    }
+
     pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
         Self {
             x,
@@ -83,14 +94,22 @@ impl Rect {
     /// Parts are as equal as possible; the leftover pixels go to the first
     /// parts so the union exactly covers `self`.
     pub fn split(self, orientation: Orientation, n: usize) -> Vec<Rect> {
+        self.split_with_gap(orientation, n, 0)
+    }
+
+    /// Like [`Rect::split`], leaving `gap` pixels between adjacent parts.
+    /// Parts never become narrower than 1 pixel.
+    pub fn split_with_gap(self, orientation: Orientation, n: usize, gap: i32) -> Vec<Rect> {
         if n == 0 {
             return Vec::new();
         }
         let n_i32 = i32::try_from(n).unwrap_or(i32::MAX);
-        let total = match orientation {
+        let gap = gap.max(0);
+        let length = match orientation {
             Orientation::Horizontal => self.width,
             Orientation::Vertical => self.height,
         };
+        let total = (length - gap * (n_i32 - 1)).max(n_i32);
         let base = total / n_i32;
         let extra = total % n_i32;
         let mut offset = 0;
@@ -103,7 +122,7 @@ impl Rect {
                     }
                     Orientation::Vertical => Rect::new(self.x, self.y + offset, self.width, size),
                 };
-                offset += size;
+                offset += size + gap;
                 r
             })
             .collect()
@@ -130,6 +149,30 @@ mod tests {
             parts,
             vec![Rect::new(0, 0, 100, 26), Rect::new(0, 26, 100, 25)]
         );
+    }
+
+    #[test]
+    fn split_with_gap_leaves_space_between_parts() {
+        let parts = Rect::new(0, 0, 100, 10).split_with_gap(Orientation::Horizontal, 3, 5);
+        assert_eq!(
+            parts,
+            vec![
+                Rect::new(0, 0, 30, 10),
+                Rect::new(35, 0, 30, 10),
+                Rect::new(70, 0, 30, 10),
+            ]
+        );
+        let tiny = Rect::new(0, 0, 4, 10).split_with_gap(Orientation::Horizontal, 2, 10);
+        assert!(tiny.iter().all(|r| r.width >= 1));
+    }
+
+    #[test]
+    fn inset_shrinks() {
+        assert_eq!(
+            Rect::new(0, 0, 100, 50).inset(1, 2, 3, 4),
+            Rect::new(1, 2, 96, 44)
+        );
+        assert_eq!(Rect::new(0, 0, 4, 4).inset(10, 10, 10, 10).width, 1);
     }
 
     #[test]

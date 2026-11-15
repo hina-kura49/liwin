@@ -18,6 +18,15 @@ use crate::geometry::{Direction, Orientation, Rect};
 /// Identifier of a window as given by the compositor (`Meta.Window.get_id()`).
 pub type WindowId = u64;
 
+/// Gaps between adjacent windows, in pixels (AeroSpace `gaps.inner`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InnerGaps {
+    /// Between windows side by side.
+    pub horizontal: i32,
+    /// Between windows stacked vertically.
+    pub vertical: i32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct NodeId(usize);
 
@@ -231,9 +240,124 @@ impl Tree {
     /// Computes the rectangle of every window when the root occupies `area`.
     /// Children of a container share its space equally.
     pub fn layout(&self, area: Rect) -> Vec<(WindowId, Rect)> {
+        self.layout_with_gaps(area, InnerGaps::default())
+    }
+
+    /// Like [`Tree::layout`], with `gaps` between adjacent windows.
+    pub fn layout_with_gaps(&self, area: Rect, gaps: InnerGaps) -> Vec<(WindowId, Rect)> {
         let mut out = Vec::with_capacity(self.windows.len());
-        self.layout_node(self.root, area, &mut out);
+        self.layout_node(self.root, area, gaps, &mut out);
         out
+    }
+
+    /// Flips the orientation of the container holding the focused window
+    /// (AeroSpace `layout tiles horizontal vertical`).
+    pub fn toggle_orientation(&mut self) -> Result<Orientation, TreeError> {
+        let focused = self.focused.ok_or(TreeError::NoFocusedWindow)?;
+        let (parent, _) = self.position(focused).expect("focused node has a parent");
+        let flipped = self.orientation(parent).flipped();
+        self.set_orientation(parent, flipped);
+        Ok(flipped)
+    }
+
+    /// Moves the focused window in `direction` (AeroSpace `move`):
+    ///
+    /// - next to a window along the container's axis: swap with it;
+    /// - next to a container along the axis: move into that container, at
+    ///   the side facing the window;
+    /// - at the edge of its container: move out, next to the nearest
+    ///   ancestor laid out along the axis;
+    /// - no such ancestor: the root is re-oriented along the axis and the
+    ///   window placed at that edge, the rest of the tree on the other side.
+    ///
+    /// The window keeps focus. Returns `Ok(false)` if nothing moved.
+    pub fn move_focused(&mut self, direction: Direction) -> Result<bool, TreeError> {
+        let focused = self.focused.ok_or(TreeError::NoFocusedWindow)?;
+        let axis = direction.orientation();
+        let forward = direction.is_forward();
+        let (parent, index) = self.position(focused).expect("focused node has a parent");
+
+        if self.orientation(parent) == axis {
+            let len = self.children(parent).len();
+            let target = if forward {
+                (index + 1 < len).then_some(index + 1)
+            } else {
+                index.checked_sub(1)
+            };
+            if let Some(target) = target {
+                let sibling = self.children(parent)[target];
+                if self.is_container(sibling) {
+                    self.children_mut(parent).remove(index);
+                    let at = if forward {
+                        0
+                    } else {
+                        self.children(sibling).len()
+                    };
+                    self.children_mut(sibling).insert(at, focused);
+                    self.node_mut(focused).parent = Some(sibling);
+                    self.normalize_upwards(parent);
+                } else {
+                    self.children_mut(parent).swap(index, target);
+                }
+                return Ok(true);
+            }
+        }
+
+        // Move out of the current container.
+        let mut branch = parent;
+        while let Some((ancestor, branch_index)) = self.position(branch) {
+            if self.orientation(ancestor) == axis {
+                self.children_mut(parent).remove(index);
+                let at = if forward {
+                    branch_index + 1
+                } else {
+                    branch_index
+                };
+                self.children_mut(ancestor).insert(at, focused);
+                self.node_mut(focused).parent = Some(ancestor);
+                self.normalize_upwards(parent);
+                return Ok(true);
+            }
+            branch = ancestor;
+        }
+
+        // No ancestor along the axis. If the root is laid out along it too,
+        // the window is already at the edge.
+        let root = self.root;
+        if self.orientation(root) == axis || self.children(root).len() < 2 {
+            return Ok(false);
+        }
+        self.children_mut(parent).remove(index);
+        self.normalize_upwards(parent);
+        let rest: Vec<NodeId> = std::mem::take(self.children_mut(root));
+        let rest_node = if let [only] = rest.as_slice() {
+            *only
+        } else {
+            let orientation = self.orientation(root);
+            let c = self.alloc(Node {
+                parent: Some(root),
+                kind: Kind::Container {
+                    orientation,
+                    children: rest.clone(),
+                },
+            });
+            for &n in &rest {
+                self.node_mut(n).parent = Some(c);
+            }
+            c
+        };
+        self.node_mut(rest_node).parent = Some(root);
+        self.node_mut(focused).parent = Some(root);
+        let children = if forward {
+            vec![rest_node, focused]
+        } else {
+            vec![focused, rest_node]
+        };
+        self.node_mut(root).kind = Kind::Container {
+            orientation: axis,
+            children,
+        };
+        Ok(true)
     }
 
     /// Compact textual representation, mainly for tests and debugging.
@@ -405,18 +529,29 @@ impl Tree {
         }
     }
 
-    fn layout_node(&self, id: NodeId, area: Rect, out: &mut Vec<(WindowId, Rect)>) {
+    fn layout_node(
+        &self,
+        id: NodeId,
+        area: Rect,
+        gaps: InnerGaps,
+        out: &mut Vec<(WindowId, Rect)>,
+    ) {
         match &self.node(id).kind {
             Kind::Window(w) => out.push((*w, area)),
             Kind::Container {
                 orientation,
                 children,
             } => {
-                for (&child, rect) in children
-                    .iter()
-                    .zip(area.split(*orientation, children.len()))
+                let gap = match orientation {
+                    Orientation::Horizontal => gaps.horizontal,
+                    Orientation::Vertical => gaps.vertical,
+                };
+                for (&child, rect) in
+                    children
+                        .iter()
+                        .zip(area.split_with_gap(*orientation, children.len(), gap))
                 {
-                    self.layout_node(child, rect, out);
+                    self.layout_node(child, rect, gaps, out);
                 }
             }
         }
@@ -680,6 +815,88 @@ mod tests {
                 (3, Rect::new(500, 300, 500, 300)),
             ]
         );
+    }
+
+    #[test]
+    fn layout_with_gaps() {
+        let t = nested(); // h[1 v[2 3]]
+        let gaps = InnerGaps {
+            horizontal: 10,
+            vertical: 4,
+        };
+        assert_eq!(
+            t.layout_with_gaps(Rect::new(0, 0, 1010, 604), gaps),
+            vec![
+                (1, Rect::new(0, 0, 500, 604)),
+                (2, Rect::new(510, 0, 500, 300)),
+                (3, Rect::new(510, 304, 500, 300)),
+            ]
+        );
+    }
+
+    #[test]
+    fn toggle_orientation_flips_parent() {
+        let mut t = nested(); // h[*1 v[2 3]]
+        assert_eq!(t.toggle_orientation(), Ok(Vertical));
+        assert_eq!(t.dump(), "v[*1 v[2 3]]");
+        t.focus_window(3).unwrap();
+        assert_eq!(t.toggle_orientation(), Ok(Horizontal));
+        assert_eq!(t.dump(), "v[1 h[2 *3]]");
+    }
+
+    #[test]
+    fn move_swaps_with_window_sibling() {
+        let mut t = tree_with(&[1, 2, 3]);
+        assert_eq!(t.move_focused(Left), Ok(true));
+        assert_eq!(t.dump(), "h[1 *3 2]");
+        assert_eq!(t.move_focused(Left), Ok(true));
+        assert_eq!(t.dump(), "h[*3 1 2]");
+    }
+
+    #[test]
+    fn move_into_container_sibling() {
+        let mut t = nested(); // h[*1 v[2 3]]
+        assert_eq!(t.move_focused(Right), Ok(true));
+        assert_eq!(t.dump(), "v[*1 2 3]", "root absorbs the lone container");
+    }
+
+    #[test]
+    fn move_out_of_container_to_ancestor() {
+        let mut t = nested();
+        t.focus_window(3).unwrap(); // h[1 v[2 *3]]
+        assert_eq!(t.move_focused(Right), Ok(true));
+        assert_eq!(t.dump(), "h[1 2 *3]");
+
+        let mut t = nested();
+        t.focus_window(2).unwrap(); // h[1 v[*2 3]]
+        assert_eq!(t.move_focused(Left), Ok(true));
+        assert_eq!(t.dump(), "h[1 *2 3]");
+    }
+
+    #[test]
+    fn move_across_root_axis_reorients_root() {
+        let mut t = tree_with(&[1, 2, 3]); // h[1 2 *3]
+        assert_eq!(t.move_focused(Down), Ok(true));
+        assert_eq!(t.dump(), "v[h[1 2] *3]");
+        let mut t = tree_with(&[1, 2]); // h[1 *2]
+        assert_eq!(t.move_focused(Up), Ok(true));
+        assert_eq!(t.dump(), "v[*2 1]");
+    }
+
+    #[test]
+    fn move_at_edge_of_single_window_tree_is_noop() {
+        let mut t = tree_with(&[1]);
+        assert_eq!(t.move_focused(Left), Ok(false));
+        assert_eq!(t.move_focused(Up), Ok(false));
+        assert_eq!(t.dump(), "h[*1]");
+    }
+
+    #[test]
+    fn move_at_edge_along_axis_is_noop() {
+        let mut t = tree_with(&[1, 2]);
+        t.focus_window(1).unwrap();
+        assert_eq!(t.move_focused(Left), Ok(false));
+        assert_eq!(t.dump(), "h[*1 2]");
     }
 
     #[test]

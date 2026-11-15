@@ -9,4 +9,4 @@ pub mod geometry;
 pub mod tree;
 
 pub use geometry::{Direction, Orientation, Rect};
-pub use tree::{Tree, TreeError, WindowId};
+pub use tree::{InnerGaps, Tree, TreeError, WindowId};

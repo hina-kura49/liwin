@@ -267,9 +267,28 @@ impl Tree {
     /// - no such ancestor: the root is re-oriented along the axis and the
     ///   window placed at that edge, the rest of the tree on the other side.
     ///
-    /// The window keeps focus. Returns `Ok(false)` if nothing moved.
+    /// A pending split around the window (see [`Tree::split`]) is dropped
+    /// first, so the window moves relative to what is visible.
+    ///
+    /// The window keeps focus. Returns `Ok(false)` if nothing moved, in which
+    /// case the tree is unchanged.
     pub fn move_focused(&mut self, direction: Direction) -> Result<bool, TreeError> {
         let focused = self.focused.ok_or(TreeError::NoFocusedWindow)?;
+        let (parent, _) = self.position(focused).expect("focused node has a parent");
+        let pending_split = (parent != self.root && self.children(parent).len() == 1)
+            .then(|| self.orientation(parent));
+        if pending_split.is_some() {
+            self.normalize_upwards(parent);
+        }
+        let moved = self.move_window(focused, direction);
+        if let (false, Some(orientation)) = (moved, pending_split) {
+            self.split(orientation)?;
+        }
+        Ok(moved)
+    }
+
+    /// Moves window node `focused` as described in [`Tree::move_focused`].
+    fn move_window(&mut self, focused: NodeId, direction: Direction) -> bool {
         let axis = direction.orientation();
         let forward = direction.is_forward();
         let (parent, index) = self.position(focused).expect("focused node has a parent");
@@ -283,7 +302,9 @@ impl Tree {
             };
             if let Some(target) = target {
                 let sibling = self.children(parent)[target];
-                if self.is_container(sibling) {
+                // A pending split (a lone window in a container) looks like
+                // a window, so it is swapped with like one.
+                if self.children(sibling).len() > 1 {
                     self.children_mut(parent).remove(index);
                     let at = if forward {
                         0
@@ -296,7 +317,7 @@ impl Tree {
                 } else {
                     self.children_mut(parent).swap(index, target);
                 }
-                return Ok(true);
+                return true;
             }
         }
 
@@ -313,7 +334,7 @@ impl Tree {
                 self.children_mut(ancestor).insert(at, focused);
                 self.node_mut(focused).parent = Some(ancestor);
                 self.normalize_upwards(parent);
-                return Ok(true);
+                return true;
             }
             branch = ancestor;
         }
@@ -322,7 +343,7 @@ impl Tree {
         // the window is already at the edge.
         let root = self.root;
         if self.orientation(root) == axis || self.children(root).len() < 2 {
-            return Ok(false);
+            return false;
         }
         self.children_mut(parent).remove(index);
         self.normalize_upwards(parent);
@@ -354,7 +375,7 @@ impl Tree {
             orientation: axis,
             children,
         };
-        Ok(true)
+        true
     }
 
     /// Compact textual representation, mainly for tests and debugging.
@@ -921,6 +942,45 @@ mod tests {
         assert_eq!(t.move_focused(Left), Ok(false));
         assert_eq!(t.move_focused(Up), Ok(false));
         assert_eq!(t.dump(), "h[*1]");
+    }
+
+    #[test]
+    fn move_out_of_pending_split_moves_visibly() {
+        // Found by property testing: the window used to leave its lone
+        // wrapper and land in the same spot, reporting a move that did not
+        // change the layout.
+        let mut t = Tree::new(Vertical);
+        t.add_window(1).unwrap();
+        t.add_window(0).unwrap();
+        t.focus_window(1).unwrap();
+        t.split(Horizontal).unwrap();
+        assert_eq!(t.dump(), "v[h[*1] 0]");
+        assert_eq!(t.move_focused(Up), Ok(false), "already at the top");
+        assert_eq!(t.dump(), "v[h[*1] 0]");
+        assert_eq!(t.move_focused(Down), Ok(true));
+        assert_eq!(t.dump(), "v[0 *1]");
+
+        let mut t = tree_with(&[1, 2]);
+        t.split(Vertical).unwrap();
+        assert_eq!(t.dump(), "h[1 v[*2]]");
+        assert_eq!(t.move_focused(Left), Ok(true));
+        assert_eq!(t.dump(), "h[*2 1]");
+
+        // A pending split next to the window is swapped with, not entered.
+        let mut t = tree_with(&[2, 0]);
+        t.split(Horizontal).unwrap();
+        t.focus_window(2).unwrap();
+        assert_eq!(t.dump(), "h[*2 h[0]]");
+        assert_eq!(t.move_focused(Right), Ok(true));
+        assert_eq!(t.dump(), "h[h[0] *2]");
+    }
+
+    #[test]
+    fn move_at_edge_keeps_pending_split() {
+        let mut t = tree_with(&[1, 2]);
+        t.split(Vertical).unwrap();
+        assert_eq!(t.move_focused(Right), Ok(false));
+        assert_eq!(t.dump(), "h[1 v[*2]]");
     }
 
     #[test]

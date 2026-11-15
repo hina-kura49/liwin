@@ -125,6 +125,8 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
         run: cargo build --release --locked --target "$TARGET" --bin liwin --bin liwin-daemon
 
       - name: Smoke test

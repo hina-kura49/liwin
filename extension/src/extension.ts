@@ -9,6 +9,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {WindowCommands} from './commands.js';
 import {DaemonClient} from './daemon.js';
+import {WorkspaceIndicator} from './indicator.js';
 import {KeybindingManager} from './keybindings.js';
 import {WindowTracker} from './windows.js';
 
@@ -17,8 +18,10 @@ class Liwin {
     private readonly _windows: WindowTracker;
     private readonly _commands: WindowCommands;
     private readonly _keys: KeybindingManager;
+    private readonly _indicator: WorkspaceIndicator;
 
     constructor() {
+        this._indicator = new WorkspaceIndicator();
         this._keys = new KeybindingManager(id => this._daemon.keybindingTriggered(id));
         this._windows = new WindowTracker({
             windowOpened: w => this._daemon.windowOpened(w),
@@ -54,6 +57,7 @@ class Liwin {
         this._daemon.destroy();
         this._keys.destroy();
         this._windows.destroy();
+        this._indicator.destroy();
     }
 
     /** Reports the outcome of a primitive command (`error` null on success). */

@@ -50,7 +50,7 @@ jobs:
             gsettings-desktop-schemas \
             libgl1-mesa-dri libegl-mesa0 libgles2 mesa-vulkan-drivers \
             systemd procps util-linux fuse3 \
-            fonts-dejavu-core adwaita-icon-theme
+            fonts-dejavu-core adwaita-icon-theme at-spi2-core
           gnome-shell --version
 
       - uses: actions/checkout@v4
@@ -90,8 +90,14 @@ jobs:
 
       # GNOME Shell connects to the system bus at startup (login manager,
       # time limits) and aborts without one; the container has no init.
+      # There is no systemd-logind either: hide it, so that the Shell uses
+      # its dummy login manager instead of D-Bus-activating logind (which
+      # fails and aborts the Shell).
       - name: Start a system bus
         run: |
+          ls -la /run/systemd 2>/dev/null || true
+          rm -rf /run/systemd
+          rm -f /usr/share/dbus-1/system-services/org.freedesktop.login1.service
           mkdir -p /run/dbus
           dbus-daemon --system --fork
           test -S /run/dbus/system_bus_socket

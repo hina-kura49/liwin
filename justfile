@@ -54,6 +54,10 @@ nested: build
 headless: build
     scripts/nested.sh headless
 
+# End-to-end check: headless Shell + extension + daemon + CLI moves a window.
+e2e: build
+    scripts/e2e.sh
+
 clean:
     cargo clean
     rm -rf extension/dist extension/build .sandbox

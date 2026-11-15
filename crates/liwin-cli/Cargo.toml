@@ -1,0 +1,13 @@
+[package]
+name = "liwin-cli"
+description = "Command-line client for the liwin daemon"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "liwin"
+path = "src/main.rs"
+
+[dependencies]
+zbus = { version = "6.3", default-features = false, features = ["tokio", "proxy"] }
+tokio = { version = "1.54", features = ["rt", "macros"] }

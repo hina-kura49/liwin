@@ -102,28 +102,27 @@ jobs:
           dbus-daemon --system --fork
           test -S /run/dbus/system_bus_socket
 
-      - name: Diagnostics watcher (temporary)
+      # GNOME Shell starts in the overview, and while the overview is shown
+      # new windows do not get the focus, so `move left` has nothing to move.
+      # (On a fast machine the e2e test happens to win that race.) Keep the
+      # overview hidden while the test runs; the helper sources .sandbox/env,
+      # so scripts/nested.sh reaps it with the other sandbox processes.
+      - name: End-to-end test (just e2e)
         run: |
-          cat >/tmp/diag.sh <<'EOF'
+          cat >/tmp/hide-overview.sh <<'EOF'
           cd "$1"
           while ! [ -f .sandbox/env ]; do sleep 0.2; done
           . .sandbox/env
-          for i in $(seq 200); do
-            date +%T.%N; target/debug/liwin list-windows
-            st=$(busctl --user get-property org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive 2>&1)
-            echo "overview: $st"
-            n=$(target/debug/liwin list-windows 2>/dev/null | grep -c .)
-            if [ "$st" = "b true" ] && { [ "$2" = early ] || [ "$n" -ge 2 ]; }; then
-              busctl --user set-property org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive b false; echo "set false: $?"
+          prop="org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive"
+          while [ -f .sandbox/env ]; do
+            if [ "$(busctl --user get-property $prop 2>/dev/null)" = "b true" ]; then
+              busctl --user set-property $prop b false && echo "e2e.yml: hid the overview"
             fi
             sleep 0.2
           done
           EOF
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
-            bash /tmp/diag.sh "$GITHUB_WORKSPACE" ${{ matrix.variant == 'pr2' && 'late' || 'early' }} >/tmp/diag.out 2>&1 &
-
-      - name: End-to-end test (just e2e)
-        run: |
+            bash /tmp/hide-overview.sh "$GITHUB_WORKSPACE" &
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
             USER="$E2E_USER" LOGNAME="$E2E_USER" LANG="$LANG" \
             CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
@@ -141,4 +140,3 @@ jobs:
           path: |
             .sandbox/*.log
             .sandbox/*.out
-            /tmp/diag.out

@@ -76,11 +76,14 @@ same mechanism GNOME Shell's own `GrabAccelerator` D-Bus API uses
    accelerators. A taken accelerator is **not stolen**: the binding is
    skipped, logged, and reported back to the daemon as rejected (see
    `KeybindingsApplied` in `dbus.md`); the daemon logs a warning naming the
-   key. This check exists because, on GNOME Shell 50.1, `grab_accelerator()`
-   was observed to accept `<Super>a` although Shell's
-   `toggle-application-view` uses it, even though mutter's source suggests
-   it should refuse. Custom shortcuts of gnome-settings-daemon are not
-   inspected yet.
+   key. This check is required: on GNOME Shell 50.1, `grab_accelerator()`
+   accepts accelerators that Shell keybindings already use (observed with
+   `<Super>a` and with `toggle-application-view` rebound to `<Alt>y`), even
+   though mutter's source suggests it should refuse — and when the key is
+   pressed, the external grab wins (verified in the devkit window: Alt+Y ran
+   the liwin command and the app grid did not open). Without this check
+   liwin would silently take GNOME's shortcuts. Custom shortcuts of
+   gnome-settings-daemon are not inspected yet.
 2. `action = global.display.grab_accelerator(accel, Meta.KeyBindingFlags.NONE)`;
    `Meta.KeyBindingAction.NONE` (e.g. another external grabber has it) is
    treated as a rejection too.

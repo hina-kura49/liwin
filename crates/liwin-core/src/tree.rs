@@ -148,32 +148,22 @@ impl Tree {
     }
 
     /// Removes a window and normalizes the tree. If the removed window was
-    /// focused, focus moves to its previous sibling (or the next one).
+    /// focused, focus moves to the nearest window before it (or after it, if
+    /// it was first) in its container, or in the closest ancestor where it has
+    /// siblings.
     pub fn remove_window(&mut self, window: WindowId) -> Result<(), TreeError> {
         let node = self
             .windows
             .remove(&window)
             .ok_or(TreeError::NoSuchWindow(window))?;
+        if self.focused == Some(node) {
+            // Picked before detaching: windows survive normalization.
+            self.focused = self.neighbor_leaf(node);
+        }
         let (parent, index) = self.position(node).expect("window node has a parent");
         self.children_mut(parent).remove(index);
         self.release(node);
-
-        if self.focused == Some(node) {
-            let siblings = self.children(parent);
-            self.focused = if index > 0 {
-                Some(self.last_leaf(siblings[index - 1]))
-            } else if let Some(&next) = siblings.first() {
-                Some(self.first_leaf(next))
-            } else {
-                None
-            };
-        }
-
         self.normalize_upwards(parent);
-
-        if self.focused.is_none() && !self.windows.is_empty() {
-            self.focused = Some(self.first_leaf(self.root));
-        }
         Ok(())
     }
 
@@ -466,6 +456,24 @@ impl Tree {
         id
     }
 
+    /// The window closest to `id` in tree order, looking first among its
+    /// siblings and then among those of its ancestors: the last window of
+    /// the previous sibling, or the first window of the next one. `None` if
+    /// `id` holds the tree's only windows.
+    fn neighbor_leaf(&self, mut id: NodeId) -> Option<NodeId> {
+        while let Some((parent, index)) = self.position(id) {
+            let siblings = self.children(parent);
+            if index > 0 {
+                return Some(self.last_leaf(siblings[index - 1]));
+            }
+            if let Some(&next) = siblings.get(1) {
+                return Some(self.first_leaf(next));
+            }
+            id = parent;
+        }
+        None
+    }
+
     /// Picks the leaf to focus when entering `id` while moving in `direction`:
     /// the child nearest to where we came from along the movement axis, the
     /// first child otherwise.
@@ -652,6 +660,23 @@ mod tests {
         t.focus_window(1).unwrap();
         t.remove_window(1).unwrap();
         assert_eq!(t.dump(), "h[*2]");
+    }
+
+    #[test]
+    fn remove_from_pending_split_focuses_neighbor() {
+        // Found by property testing: focus used to jump to the first window
+        // of the tree (0) instead of the removed window's neighbor (1).
+        let mut t = tree_with(&[0, 1, 8]);
+        t.split(Horizontal).unwrap();
+        assert_eq!(t.dump(), "h[0 1 h[*8]]");
+        t.remove_window(8).unwrap();
+        assert_eq!(t.dump(), "h[0 *1]");
+
+        let mut t = tree_with(&[1, 2, 3]);
+        t.focus_window(1).unwrap();
+        t.split(Vertical).unwrap();
+        t.remove_window(1).unwrap();
+        assert_eq!(t.dump(), "h[*2 3]");
     }
 
     #[test]

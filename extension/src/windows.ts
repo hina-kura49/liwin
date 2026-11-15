@@ -5,8 +5,10 @@
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {ALL_WORKSPACES, FLAG_FLOATING} from './daemon.js';
-import type {Placement, WireMonitor, WireWindow} from './daemon.js';
+import {windowFlags} from './floating.js';
+import type {WindowState} from './floating.js';
+import {ALL_WORKSPACES} from './protocol.js';
+import type {Placement, WireMonitor, WireWindow} from './protocol.js';
 
 export interface WindowEvents {
     windowOpened(window: WireWindow): void;
@@ -30,27 +32,20 @@ function isManageable(win: Meta.Window): boolean {
         (win.is_on_all_workspaces() || win.get_workspace() !== null);
 }
 
-/**
- * Windows that are reported but must not be tiled: transient windows
- * (dialogs) and fixed-size windows.
- *
- * allows_resize() is false while a window is maximized or fullscreen (seen
- * with GNOME Shell 50: a maximized gnome-text-editor reported false), so it
- * only says "fixed size" when the window is in neither state. Tiling
- * unmaximizes windows anyway.
- */
-function isFloating(win: Meta.Window): boolean {
-    if (win.get_transient_for() !== null)
-        return true;
-    const constrained = win.is_maximized() || win.is_fullscreen();
-    return !constrained && !win.allows_resize();
+/** The inputs of the floating decision (see floating.ts). */
+function windowState(win: Meta.Window): WindowState {
+    return {
+        transient: win.get_transient_for() !== null,
+        maximized: win.is_maximized(),
+        fullscreen: win.is_fullscreen(),
+        allowsResize: win.allows_resize(),
+    };
 }
 
 export function toWire(win: Meta.Window): WireWindow {
     const r = win.get_frame_rect();
     const ws = win.is_on_all_workspaces() ? ALL_WORKSPACES : win.get_workspace()?.index() ?? 0;
-    const flags = isFloating(win) ? FLAG_FLOATING : 0;
-    return [win.get_id(), ws, win.get_monitor(), r.x, r.y, r.width, r.height, flags];
+    return [win.get_id(), ws, win.get_monitor(), r.x, r.y, r.width, r.height, windowFlags(windowState(win))];
 }
 
 export class WindowTracker {

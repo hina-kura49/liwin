@@ -1,0 +1,18 @@
+{
+  "//": "Unit tests for the pure modules of src/ (no gi://, no resource://). The GNOME type definitions are deliberately not included, so importing GNOME from a tested module fails to compile.",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "./dist-test",
+    "rootDir": ".",
+    "sourceMap": false,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true,
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["test/**/*.ts"]
+}

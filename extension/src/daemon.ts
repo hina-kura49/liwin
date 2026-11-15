@@ -8,23 +8,10 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-export const BUS_NAME = 'io.github.liwin.Daemon';
-export const OBJECT_PATH = '/io/github/liwin/Daemon';
-export const BRIDGE_INTERFACE = 'io.github.liwin.ShellBridge1';
-export const PROTOCOL_VERSION = 2;
+import {BRIDGE_INTERFACE, BUS_NAME, OBJECT_PATH, PROTOCOL_VERSION} from './protocol.js';
+import type {Placement, WireMonitor, WireWindow} from './protocol.js';
+
 const CALL_TIMEOUT_MS = 1000;
-
-/** Workspace index meaning "on all workspaces". */
-export const ALL_WORKSPACES = 0xffffffff;
-/** Window flag: do not tile (not resizable, transient, ...). */
-export const FLAG_FLOATING = 1;
-
-/** `(id, workspace, monitor, x, y, width, height, flags)` */
-export type WireWindow = [number, number, number, number, number, number, number, number];
-/** `(id, x, y, width, height)` */
-export type Placement = [number, number, number, number, number];
-/** `(index, x, y, width, height)` of the monitor's work area */
-export type WireMonitor = [number, number, number, number, number];
 
 export interface DaemonHandlers {
     /** The daemon appeared and accepted Hello: send a full snapshot. */

@@ -11,6 +11,9 @@
 
 import Gio from 'gi://Gio';
 
+import {addBound} from './accelerator.js';
+import type {BoundAccelerators} from './accelerator.js';
+
 const KEYBINDING_SCHEMAS = [
     'org.gnome.desktop.wm.keybindings',
     'org.gnome.shell.keybindings',
@@ -19,40 +22,9 @@ const KEYBINDING_SCHEMAS = [
     'org.gnome.settings-daemon.plugins.media-keys',
 ];
 
-const MODIFIER_ALIASES: Record<string, string> = {
-    control: 'control', ctrl: 'control', primary: 'control',
-    alt: 'alt', mod1: 'alt',
-    shift: 'shift',
-    super: 'super', mod4: 'super',
-    meta: 'meta',
-    hyper: 'hyper',
-};
-
-/**
- * Normalizes a GTK accelerator string (`<Ctrl><Alt>T`) to a canonical form
- * (`alt+control+t`), or returns null if it cannot be parsed.
- */
-export function normalizeAccelerator(accel: string): string | null {
-    const mods = new Set<string>();
-    let rest = accel.trim();
-    for (;;) {
-        const m = /^<([^>]+)>/.exec(rest);
-        if (!m)
-            break;
-        const mod = MODIFIER_ALIASES[m[1].toLowerCase()];
-        if (!mod)
-            return null;
-        mods.add(mod);
-        rest = rest.slice(m[0].length);
-    }
-    if (rest.length === 0)
-        return null;
-    return [...[...mods].sort(), rest.toLowerCase()].join('+');
-}
-
 /** Map of normalized accelerator → "schema key" currently bound by GNOME. */
-export function gnomeBoundAccelerators(): Map<string, string> {
-    const bound = new Map<string, string>();
+export function gnomeBoundAccelerators(): BoundAccelerators {
+    const bound: BoundAccelerators = new Map();
     const source = Gio.SettingsSchemaSource.get_default();
     if (!source)
         return bound;
@@ -64,11 +36,7 @@ export function gnomeBoundAccelerators(): Map<string, string> {
         for (const key of schema.list_keys()) {
             if (schema.get_key(key).get_value_type().dup_string() !== 'as')
                 continue;
-            for (const accel of settings.get_strv(key)) {
-                const norm = normalizeAccelerator(accel);
-                if (norm && !bound.has(norm))
-                    bound.set(norm, `${id} ${key}`);
-            }
+            addBound(bound, `${id} ${key}`, settings.get_strv(key));
         }
     }
     return bound;

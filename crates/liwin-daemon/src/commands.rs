@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Command language shared by the CLI and keybindings (AeroSpace-like).
 
-use liwin_core::{Direction, Rect, WindowId};
+use liwin_core::{Direction, Orientation, Rect, WindowId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// `focus left|right|up|down`
     Focus(Direction),
+    /// `move left|right|up|down`
+    Move(Direction),
+    /// `layout tiles horizontal vertical` (toggle) or `layout horizontal|vertical`
+    Layout(LayoutChange),
+    /// `workspace <n>`; `n` is 1-based like AeroSpace's default names, the
+    /// payload is the 0-based GNOME workspace index.
+    Workspace(u32),
+    /// `move-node-to-workspace <n>` (payload: 0-based index)
+    MoveNodeToWorkspace(u32),
     /// `list-windows`
     ListWindows,
     /// `debug move-window <id> <x> <y> <width> <height>`
@@ -17,6 +26,12 @@ pub enum Command {
     DebugResync,
     /// `help`
     Help,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutChange {
+    Toggle,
+    Set(Orientation),
 }
 
 impl Command {
@@ -32,6 +47,10 @@ pub const USAGE: &str = "\
 usage:
   help
   focus left|right|up|down
+  move left|right|up|down
+  layout tiles horizontal vertical | layout horizontal | layout vertical
+  workspace <1-based number>
+  move-node-to-workspace <1-based number>
   list-windows
   debug move-window <window-id> <x> <y> <width> <height>   (needs --enable-debug-commands)
   debug tree                                               (needs --enable-debug-commands)
@@ -42,6 +61,17 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
     let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
     match args.as_slice() {
         ["focus", dir] => Ok(Command::Focus(dir.parse()?)),
+        ["move", dir] => Ok(Command::Move(dir.parse()?)),
+        ["layout", "tiles", "horizontal", "vertical"]
+        | ["layout", "tiles", "vertical", "horizontal"]
+        | ["layout", "horizontal", "vertical"]
+        | ["layout", "vertical", "horizontal"] => Ok(Command::Layout(LayoutChange::Toggle)),
+        ["layout", "horizontal"] => Ok(Command::Layout(LayoutChange::Set(Orientation::Horizontal))),
+        ["layout", "vertical"] => Ok(Command::Layout(LayoutChange::Set(Orientation::Vertical))),
+        ["workspace", name] => Ok(Command::Workspace(workspace_index(name)?)),
+        ["move-node-to-workspace", name] => {
+            Ok(Command::MoveNodeToWorkspace(workspace_index(name)?))
+        }
         ["list-windows"] => Ok(Command::ListWindows),
         ["help"] => Ok(Command::Help),
         ["debug", "move-window", id, x, y, w, h] => {
@@ -61,6 +91,17 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         ["debug", "resync"] => Ok(Command::DebugResync),
         [] => Err(format!("no command given\n{USAGE}")),
         _ => Err(format!("unknown command '{}'\n{USAGE}", args.join(" "))),
+    }
+}
+
+/// AeroSpace names workspaces; liwin maps numeric names `1`, `2`, ... onto
+/// GNOME workspace indices `0`, `1`, ...
+fn workspace_index(name: &str) -> Result<u32, String> {
+    match name.parse::<u32>() {
+        Ok(n) if n >= 1 => Ok(n - 1),
+        _ => Err(format!(
+            "unsupported workspace '{name}': only numeric workspaces 1, 2, ... are supported"
+        )),
     }
 }
 
@@ -93,6 +134,27 @@ mod tests {
         );
         assert!(parse(&["debug", "move-window", "42", "0", "0", "0", "600"]).is_err());
         assert!(parse(&["debug", "move-window", "x", "0", "0", "1", "1"]).is_err());
+    }
+
+    #[test]
+    fn parses_move_layout_and_workspaces() {
+        assert_eq!(parse(&["move", "up"]), Ok(Command::Move(Direction::Up)));
+        assert_eq!(
+            parse(&["layout", "tiles", "horizontal", "vertical"]),
+            Ok(Command::Layout(LayoutChange::Toggle))
+        );
+        assert_eq!(
+            parse(&["layout", "vertical"]),
+            Ok(Command::Layout(LayoutChange::Set(Orientation::Vertical)))
+        );
+        assert_eq!(parse(&["workspace", "1"]), Ok(Command::Workspace(0)));
+        assert_eq!(
+            parse(&["move-node-to-workspace", "9"]),
+            Ok(Command::MoveNodeToWorkspace(8))
+        );
+        assert!(parse(&["workspace", "0"]).is_err());
+        assert!(parse(&["workspace", "web"]).is_err());
+        assert!(parse(&["layout", "accordion"]).is_err());
     }
 
     #[test]

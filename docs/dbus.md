@@ -11,14 +11,15 @@ extension exports nothing.
 | Object path | `/io/github/liwin/Daemon`     |
 | Interfaces  | `io.github.liwin.Daemon1` (CLI / scripting), `io.github.liwin.ShellBridge1` (extension) |
 
-Protocol version: **1** (exchanged in `ShellBridge1.Hello`).
+Protocol version: **2** (exchanged in `ShellBridge1.Hello`). Version 2 added
+window flags, `WindowChanged`, `ApplyLayout` and the workspace commands.
 
 ## Common types
 
 | Name        | Signature | Meaning |
 |-------------|-----------|---------|
 | `WindowId`  | `t`       | `Meta.Window.get_id()` (stable for the window's lifetime, unique per Shell instance). `0` means "no window". |
-| `Window`    | `(tuiiiii)` | `(id, workspace_index, monitor_index, x, y, width, height)`; geometry is the frame rect in logical pixels. |
+| `Window`    | `(tuiiiiiu)` | `(id, workspace_index, monitor_index, x, y, width, height, flags)`; geometry is the frame rect in logical pixels. `workspace_index` is `0xFFFFFFFF` for windows on all workspaces. Flag `1` = floating: reported but never tiled (transient windows, fixed-size windows). |
 | `Monitor`   | `(iiiii)` | `(monitor_index, work_area_x, work_area_y, work_area_width, work_area_height)` |
 | `RequestId` | `u`       | Daemon-chosen id correlating a command signal with `RequestCompleted`. |
 | `BindingId` | `u`       | Opaque daemon-chosen id for a keybinding. |
@@ -38,7 +39,13 @@ Callable by any session-bus client of the same user.
   `io.github.liwin.Error.ShellNotConnected`, `io.github.liwin.Error.Timeout`,
   `io.github.liwin.Error.Failed`.
 
-  Debug commands (`debug move-window <id> <x> <y> <w> <h>`) are only accepted
+  Commands: `focus|move left|right|up|down`,
+  `layout tiles horizontal vertical` (toggle), `layout horizontal|vertical`,
+  `workspace <n>`, `move-node-to-workspace <n>` (`n` is 1-based and maps to
+  GNOME workspace index `n - 1`), `list-windows`, `help`.
+
+  Debug commands (`debug move-window <id> <x> <y> <w> <h>`, `debug tree`,
+  `debug resync`) are only accepted
   when the daemon was started with `--enable-debug-commands`; otherwise they
   fail with `InvalidCommand`.
 
@@ -62,7 +69,10 @@ signals that really come from the current owner of that name.
 `ResyncRequested` is broadcast once at daemon startup, when no Shell peer is
 known yet; it carries no data.
 
-The extension must call every method asynchronously.
+The extension must call every method asynchronously. The daemon applies
+`ShellBridge1` calls strictly in the order it receives them (zbus `spawn =
+false`), since events like `WindowOpened` followed by `FocusChanged` are
+order-dependent.
 
 ### Methods (extension → daemon)
 
@@ -75,10 +85,15 @@ The extension must call every method asynchronously.
   the peer (and its model) until the next `Hello`.
 - `SyncMonitors(in a(iiiii) monitors)`
   Full replacement of the monitor/work-area list.
-- `SyncWindows(in t focused, in a(tuiiiii) windows)`
-  Full replacement of the managed window set (normal, non-skip-taskbar
-  windows only). `focused` may be `0`.
-- `WindowOpened(in (tuiiiii) window)`
+- `SyncWindows(in t focused, in a(tuiiiiiu) windows)`
+  Full snapshot of the managed window set (normal, non-skip-taskbar windows
+  only). `focused` may be `0`. The daemon reconciles it with its trees
+  (windows keep their place) and re-applies the layout of every tree.
+- `WindowOpened(in (tuiiiiiu) window)`
+  Sent once the window is shown, followed by `FocusChanged` if it already
+  has focus.
+- `WindowChanged(in (tuiiiiiu) window)`
+  A reported window moved to another workspace or monitor.
 - `WindowClosed(in t window_id)`
 - `FocusChanged(in t window_id)` — `0` when no managed window is focused.
 - `KeybindingTriggered(in u binding_id)`
@@ -91,6 +106,18 @@ The extension must call every method asynchronously.
   when `ok` is true.
 
 ### Signals (daemon → extension)
+
+- `ApplyLayout(a(tiiii) placements)`
+  `(window_id, x, y, width, height)` for every window of the trees whose
+  layout changed. Sent after window/monitor events and layout commands. The
+  extension unmaximizes as needed and calls `move_resize_frame` for each.
+  Not acknowledged.
+- `ActivateWorkspace(u request_id, u workspace_index)`
+  Calls `Meta.Workspace.activate(global.get_current_time())`; fails with
+  `"no-such-workspace"` if the index does not exist.
+- `MoveWindowToWorkspace(u request_id, t window_id, u workspace_index)`
+  Calls `Meta.Window.change_workspace_by_index(index, false)`; the
+  resulting `WindowChanged` makes the daemon re-tile both workspaces.
 
 - `MoveResizeWindow(u request_id, t window_id, i x, i y, i width, i height)`
   Unmaximizes the window if needed and calls
@@ -111,10 +138,11 @@ Extension enabled while the daemon is running:
 
 ```
 ext: bus_watch_name(io.github.liwin.Daemon) → appeared
-ext → Hello(1)                → 1
+ext → Hello(2)                → 2
 ext → SyncMonitors([...])
 ext → SyncWindows(focused, [...])
 daemon ⇒ KeybindingsChanged([...])
+daemon ⇒ ApplyLayout([...])
 ext → KeybindingsApplied([rejected ids])
 ```
 

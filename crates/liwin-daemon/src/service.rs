@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures_util::StreamExt;
-use liwin_core::{Orientation, Rect, WindowId};
+use liwin_core::{Rect, WindowId};
 use tokio::sync::oneshot;
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 use zbus::names::{BusName, OwnedUniqueName};
@@ -13,8 +13,8 @@ use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
 
 use crate::bridge::{ShellBridge, ShellBridgeSignals};
-use crate::commands::{self, Command};
-use crate::model::Model;
+use crate::commands::{self, Command, LayoutChange};
+use crate::model::{ALL_WORKSPACES, Model};
 use crate::{BUS_NAME, LiwinError, OBJECT_PATH, Options};
 
 type RequestResult = Result<(), String>;
@@ -59,14 +59,14 @@ pub struct Shared {
 impl Shared {
     pub fn new(options: Options) -> Self {
         Self {
-            options,
             state: Mutex::new(State {
                 shell_peer: None,
                 keybindings_sent: false,
-                model: Model::new(Orientation::Horizontal),
+                model: Model::new(options.layout),
                 next_request_id: 1,
                 pending: HashMap::new(),
             }),
+            options,
         }
     }
 
@@ -114,6 +114,30 @@ impl Shared {
                 )))
             }
         }
+    }
+
+    /// Sends the layout of all dirty trees to the Shell (unicast, not
+    /// acknowledged). A no-op when nothing changed or no Shell is connected.
+    pub async fn flush_layout(&self, conn: &Connection) -> Result<(), LiwinError> {
+        let (peer, layout) = {
+            let mut st = self.state();
+            let layout = st.model.take_layout();
+            (st.shell_peer.clone(), layout)
+        };
+        let Some(peer) = peer else { return Ok(()) };
+        if layout.is_empty() {
+            return Ok(());
+        }
+        tracing::debug!(windows = layout.len(), "ApplyLayout");
+        let batch: Vec<(u64, i32, i32, i32, i32)> = layout
+            .into_iter()
+            .map(|(id, r)| (id, r.x, r.y, r.width, r.height))
+            .collect();
+        SignalEmitter::new(conn, OBJECT_PATH)?
+            .set_destination(BusName::Unique(peer.into()))
+            .apply_layout(batch)
+            .await?;
+        Ok(())
     }
 
     pub async fn focus_window(
@@ -165,7 +189,7 @@ impl Shared {
                 self.shell_peer()?;
                 let target = {
                     let mut st = self.state();
-                    let Some(tree) = st.model.focused_tree_mut() else {
+                    let Some((_, tree)) = st.model.focused_tree_mut() else {
                         return Ok(String::new());
                     };
                     let moved = tree
@@ -179,6 +203,65 @@ impl Shared {
                 if let Some(target) = target {
                     self.focus_window(conn, target).await?;
                 }
+                Ok(String::new())
+            }
+            Command::Move(direction) => {
+                self.shell_peer()?;
+                {
+                    let mut st = self.state();
+                    let Some((key, tree)) = st.model.focused_tree_mut() else {
+                        return Ok(String::new());
+                    };
+                    let moved = tree
+                        .move_focused(direction)
+                        .map_err(|e| LiwinError::Failed(e.to_string()))?;
+                    if !moved {
+                        return Ok(String::new());
+                    }
+                    st.model.mark_dirty(key);
+                }
+                self.flush_layout(conn).await?;
+                Ok(String::new())
+            }
+            Command::Layout(change) => {
+                self.shell_peer()?;
+                {
+                    let mut st = self.state();
+                    let Some((key, tree)) = st.model.focused_tree_mut() else {
+                        return Ok(String::new());
+                    };
+                    let current = tree
+                        .focused_container_orientation()
+                        .map_err(|e| LiwinError::Failed(e.to_string()))?;
+                    let wanted = match change {
+                        LayoutChange::Toggle => current.flipped(),
+                        LayoutChange::Set(o) => o,
+                    };
+                    if wanted != current {
+                        tree.toggle_orientation()
+                            .map_err(|e| LiwinError::Failed(e.to_string()))?;
+                        st.model.mark_dirty(key);
+                    }
+                }
+                self.flush_layout(conn).await?;
+                Ok(String::new())
+            }
+            Command::Workspace(index) => {
+                self.request(conn, |e, id| async move {
+                    e.activate_workspace(id, index).await
+                })
+                .await?;
+                Ok(String::new())
+            }
+            Command::MoveNodeToWorkspace(index) => {
+                self.shell_peer()?;
+                let Some(window) = self.state().model.focused else {
+                    return Ok(String::new());
+                };
+                self.request(conn, |e, id| async move {
+                    e.move_window_to_workspace(id, window, index).await
+                })
+                .await?;
                 Ok(String::new())
             }
             Command::DebugMoveWindow { window, rect } => {
@@ -199,9 +282,15 @@ impl Shared {
             .values()
             .map(|w| {
                 let mark = if m.focused == Some(w.id) { "*" } else { " " };
+                let workspace = if w.workspace == ALL_WORKSPACES {
+                    "all".to_owned()
+                } else {
+                    (w.workspace + 1).to_string()
+                };
+                let floating = if w.floating { " floating" } else { "" };
                 format!(
-                    "{mark} {:<12} workspace={} monitor={} {}x{}+{}+{}",
-                    w.id, w.workspace, w.monitor, w.rect.width, w.rect.height, w.rect.x, w.rect.y
+                    "{mark} {:<12} workspace={workspace} monitor={} {}x{}+{}+{}{floating}",
+                    w.id, w.monitor, w.rect.width, w.rect.height, w.rect.x, w.rect.y
                 )
             })
             .collect::<Vec<_>>()
@@ -213,7 +302,13 @@ impl Shared {
         st.model
             .trees
             .iter()
-            .map(|(ws, t)| format!("workspace {ws}: {}", t.dump()))
+            .map(|((ws, mon), t)| {
+                format!(
+                    "workspace {} monitor {mon}: {}",
+                    ws.wrapping_add(1),
+                    t.dump()
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }

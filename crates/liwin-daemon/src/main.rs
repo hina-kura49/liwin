@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
     let loaded = config::load(&config_path).map_err(anyhow::Error::msg)?;
     let mut warnings = loaded.warnings;
     let keybindings = loaded.config.main_bindings(&mut warnings);
+    let layout = loaded.config.layout_settings(&mut warnings);
     for w in &warnings {
         tracing::warn!("{}: {w}", config_path.display());
     }
@@ -52,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
         enable_debug_commands: args.enable_debug_commands,
         request_timeout: Duration::from_millis(args.request_timeout_ms),
         keybindings,
+        layout,
     };
 
     let _conn = service::serve(zbus::connection::Builder::session(), options)

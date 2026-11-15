@@ -3,8 +3,9 @@
 An AeroSpace-like (i3-style) tiling workflow for GNOME on Wayland, running on
 top of the stock GNOME Shell.
 
-> Status: skeleton. Windows can be listed, moved and focused end to end, and
-> keybindings are wired through, but there is no automatic tiling yet.
+> Status: early. Windows are tiled automatically per GNOME workspace and
+> monitor; focus/move/layout/workspace commands and keybindings work. Test it
+> in the nested Shell (`just nested`) before using it on your real desktop.
 
 - `crates/liwin-core` — pure window tree + layout logic (no GNOME, no D-Bus)
 - `crates/liwin-daemon` — D-Bus service (`io.github.liwin.Daemon`) and config

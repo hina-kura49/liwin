@@ -42,7 +42,11 @@ fn opt_window(id: u64) -> Option<u64> {
     (id != 0).then_some(id)
 }
 
-#[interface(name = "io.github.liwin.ShellBridge1")]
+// `spawn = false`: zbus otherwise runs each call in its own task, which can
+// reorder them (observed: WindowOpened/FocusChanged from the extension were
+// applied out of order and focus was lost). Events from the Shell must be
+// applied in the order they were sent.
+#[interface(name = "io.github.liwin.ShellBridge1", spawn = false)]
 impl ShellBridge {
     /// Authenticates the caller as GNOME Shell: it must be the current owner of
     /// `org.gnome.Shell.Introspect`.
@@ -96,6 +100,7 @@ impl ShellBridge {
         &self,
         monitors: Vec<WireMonitor>,
         #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
         tracing::debug!(count = monitors.len(), "SyncMonitors");
@@ -103,7 +108,7 @@ impl ShellBridge {
             .state()
             .model
             .sync_monitors(monitors.into_iter().map(Into::into));
-        Ok(())
+        self.shared.flush_layout(conn).await
     }
 
     async fn sync_windows(
@@ -137,27 +142,41 @@ impl ShellBridge {
                 .keybindings_changed(table)
                 .await?;
         }
-        Ok(())
+        self.shared.flush_layout(conn).await
     }
 
     async fn window_opened(
         &self,
         window: WireWindow,
         #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
         self.shared.state().model.window_opened(window.into());
-        Ok(())
+        self.shared.flush_layout(conn).await
+    }
+
+    /// A known window changed workspace, monitor or floating state.
+    async fn window_changed(
+        &self,
+        window: WireWindow,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
+    ) -> Result<(), LiwinError> {
+        self.authorize(&hdr)?;
+        self.shared.state().model.window_opened(window.into());
+        self.shared.flush_layout(conn).await
     }
 
     async fn window_closed(
         &self,
         window_id: u64,
         #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
         self.shared.state().model.window_closed(window_id);
-        Ok(())
+        self.shared.flush_layout(conn).await
     }
 
     async fn focus_changed(
@@ -166,6 +185,7 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
+        tracing::debug!(window_id, "FocusChanged");
         self.shared
             .state()
             .model
@@ -258,6 +278,28 @@ impl ShellBridge {
         emitter: &SignalEmitter<'_>,
         request_id: u32,
         window_id: u64,
+    ) -> zbus::Result<()>;
+
+    /// Primitive batch move/resize from a layout pass. Not acknowledged.
+    #[zbus(signal)]
+    pub async fn apply_layout(
+        emitter: &SignalEmitter<'_>,
+        windows: Vec<(u64, i32, i32, i32, i32)>,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn activate_workspace(
+        emitter: &SignalEmitter<'_>,
+        request_id: u32,
+        workspace: u32,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn move_window_to_workspace(
+        emitter: &SignalEmitter<'_>,
+        request_id: u32,
+        window_id: u64,
+        workspace: u32,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]

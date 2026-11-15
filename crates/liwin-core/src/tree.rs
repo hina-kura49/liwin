@@ -250,6 +250,13 @@ impl Tree {
         out
     }
 
+    /// Orientation of the container holding the focused window.
+    pub fn focused_container_orientation(&self) -> Result<Orientation, TreeError> {
+        let focused = self.focused.ok_or(TreeError::NoFocusedWindow)?;
+        let (parent, _) = self.position(focused).expect("focused node has a parent");
+        Ok(self.orientation(parent))
+    }
+
     /// Flips the orientation of the container holding the focused window
     /// (AeroSpace `layout tiles horizontal vertical`).
     pub fn toggle_orientation(&mut self) -> Result<Orientation, TreeError> {

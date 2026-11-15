@@ -97,8 +97,10 @@ allowed-keybinding map.
 ### 2. Daemon (`crates/liwin-daemon`, Rust, zbus)
 
 - Owns the well-known name `io.github.liwin.Daemon` on the session bus.
-- Holds the authoritative model (`liwin-core`): per-workspace trees of
-  horizontal/vertical split containers with windows as leaves.
+- Holds the authoritative model (`liwin-core`): one tree per (GNOME
+  workspace, monitor) of horizontal/vertical split containers with windows
+  as leaves. Floating windows (transient or fixed-size) are tracked but not
+  tiled. liwin uses GNOME's own workspaces rather than emulating them.
 - Translates high-level commands (`focus left`, keybinding presses) into
   primitive operations, emitted as signals for the extension.
 - Loads the TOML configuration and sends the keybinding table
@@ -108,8 +110,10 @@ allowed-keybinding map.
   `org.gnome.Shell.Introspect` — a name GNOME Shell itself owns on the same
   connection (`Gio.DBus.session`) that extensions use. Any other caller gets
   `io.github.liwin.Error.AccessDenied`.
-- In the skeleton the daemon **does not auto-tile real windows**. Layout is
-  computed only in tests and on explicit commands.
+- Tiles automatically: whenever a window opens, closes, changes workspace or
+  monitor, or a layout command runs, the affected trees are laid out into the
+  monitor's work area (minus outer gaps, with inner gaps) and sent to the
+  extension as one `ApplyLayout` batch.
 
 ### 3. CLI (`crates/liwin-cli`)
 
@@ -197,6 +201,12 @@ Neither side requires the other to be running first:
 - The nested Shell runs without an input method: `ibus-daemon` is shadowed by
   a no-op in `.sandbox/bin` and input sources are set to `xkb us`. A nested
   IBus shares the user's IME backend and broke conversion in practice.
+- The headless Shell also gets its own `XDG_RUNTIME_DIR` (`.sandbox/run`):
+  GNOME Shell keeps a crash sentinel (`gnome-shell-disable-extensions`) there
+  for its first 60 s, and the logged-in session's systemd unit would disable
+  the user's extensions if *that* Shell crashed meanwhile. The devkit window
+  needs the real runtime dir to reach the real compositor, so devkit runs
+  still share it.
 - Super-based shortcuts cannot be tested in the devkit window: the logged-in
   GNOME Shell handles them before the nested Shell sees them.
 

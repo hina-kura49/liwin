@@ -20,6 +20,7 @@ class Liwin {
         this._keys = new KeybindingManager(id => this._daemon.keybindingTriggered(id));
         this._windows = new WindowTracker({
             windowOpened: w => this._daemon.windowOpened(w),
+            windowChanged: w => this._daemon.windowChanged(w),
             windowClosed: id => this._daemon.windowClosed(id),
             focusChanged: id => this._daemon.focusChanged(id),
             monitorsChanged: () => this._daemon.syncMonitors(this._windows.monitors()),
@@ -31,6 +32,15 @@ class Liwin {
             onDisconnected: () => this._keys.clear(),
             onMoveResizeWindow: (req, id, x, y, w, h) => {
                 const err = this._windows.moveResize(id, x, y, w, h);
+                this._daemon.requestCompleted(req, err === null, err ?? '');
+            },
+            onApplyLayout: placements => this._windows.applyLayout(placements),
+            onActivateWorkspace: (req, ws) => {
+                const err = this._windows.activateWorkspace(ws);
+                this._daemon.requestCompleted(req, err === null, err ?? '');
+            },
+            onMoveWindowToWorkspace: (req, id, ws) => {
+                const err = this._windows.moveToWorkspace(id, ws);
                 this._daemon.requestCompleted(req, err === null, err ?? '');
             },
             onFocusWindow: (req, id) => {

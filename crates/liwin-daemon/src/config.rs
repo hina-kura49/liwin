@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::model::{self, LayoutSettings, RootOrientation};
+
 /// Root of `liwin.toml` (AeroSpace key names).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
@@ -155,7 +157,50 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
     }
 }
 
+impl Gap {
+    /// Pixel value; per-monitor gaps are not supported yet and count as 0.
+    fn pixels(&self, name: &str, warnings: &mut Vec<String>) -> i32 {
+        match self {
+            Gap::Uniform(px) => (*px).max(0),
+            Gap::PerMonitor(_) => {
+                warnings.push(format!(
+                    "per-monitor value of '{name}' is not supported yet; using 0"
+                ));
+                0
+            }
+        }
+    }
+}
+
 impl Config {
+    /// Layout parameters (gaps, root orientation) for the daemon.
+    pub fn layout_settings(&self, warnings: &mut Vec<String>) -> LayoutSettings {
+        let g = &self.gaps;
+        if self.default_root_container_layout == Some(Layout::Accordion) {
+            warnings.push(
+                "default-root-container-layout = 'accordion' is not supported yet; using tiles"
+                    .into(),
+            );
+        }
+        LayoutSettings {
+            root_orientation: match self.default_root_container_orientation {
+                Some(OrientationSetting::Horizontal) => RootOrientation::Horizontal,
+                Some(OrientationSetting::Vertical) => RootOrientation::Vertical,
+                Some(OrientationSetting::Auto) | None => RootOrientation::Auto,
+            },
+            inner: liwin_core::InnerGaps {
+                horizontal: g.inner.horizontal.pixels("gaps.inner.horizontal", warnings),
+                vertical: g.inner.vertical.pixels("gaps.inner.vertical", warnings),
+            },
+            outer: model::OuterGaps {
+                left: g.outer.left.pixels("gaps.outer.left", warnings),
+                top: g.outer.top.pixels("gaps.outer.top", warnings),
+                right: g.outer.right.pixels("gaps.outer.right", warnings),
+                bottom: g.outer.bottom.pixels("gaps.outer.bottom", warnings),
+            },
+        }
+    }
+
     /// Resolves the `main` mode bindings. Invalid ones are reported in
     /// `warnings` and skipped.
     pub fn main_bindings(&self, warnings: &mut Vec<String>) -> Vec<KeyBinding> {
@@ -370,6 +415,21 @@ mod tests {
             warnings,
             vec!["binding 'meta-x' skipped: unknown modifier 'meta'"]
         );
+    }
+
+    #[test]
+    fn layout_settings_from_config() {
+        let loaded = parse(
+            "default-root-container-orientation = 'vertical'\n[gaps]\ninner.horizontal = 8\nouter.top = [{ monitor.main = 1 }, 2]\nouter.left = 3\n",
+        )
+        .unwrap();
+        let mut warnings = Vec::new();
+        let l = loaded.config.layout_settings(&mut warnings);
+        assert_eq!(l.root_orientation, RootOrientation::Vertical);
+        assert_eq!(l.inner.horizontal, 8);
+        assert_eq!(l.outer.left, 3);
+        assert_eq!(l.outer.top, 0);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
     #[test]

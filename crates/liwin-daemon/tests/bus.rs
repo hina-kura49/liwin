@@ -17,6 +17,10 @@ use tokio::process::{Child, Command};
 use zbus::message::Type;
 use zbus::{Connection, MatchRule, MessageStream};
 
+/// `(id, workspace, monitor, x, y, width, height, flags)`
+type Wire = (u64, u32, i32, i32, i32, i32, i32, u32);
+type Placement = (u64, i32, i32, i32, i32);
+
 struct Bus {
     _child: Child,
     address: String,
@@ -96,16 +100,18 @@ fn error_name(e: &zbus::Error) -> String {
 }
 
 async fn hello_and_sync(shell: &Connection) {
-    let v: u32 = call(shell, BRIDGE_INTERFACE, "Hello", &(1u32,))
+    let v: u32 = call(shell, BRIDGE_INTERFACE, "Hello", &(2u32,))
         .await
         .unwrap();
-    assert_eq!(v, 1);
+    assert_eq!(v, 2);
     let monitors: Vec<(i32, i32, i32, i32, i32)> = vec![(0, 0, 32, 1920, 1048)];
     let () = call(shell, BRIDGE_INTERFACE, "SyncMonitors", &(monitors,))
         .await
         .unwrap();
-    let windows: Vec<(u64, u32, i32, i32, i32, i32, i32)> =
-        vec![(11, 0, 0, 0, 32, 960, 1048), (22, 0, 0, 960, 32, 960, 1048)];
+    let windows: Vec<Wire> = vec![
+        (11, 0, 0, 100, 100, 640, 480, 0),
+        (22, 0, 0, 200, 200, 640, 480, 0),
+    ];
     let () = call(shell, BRIDGE_INTERFACE, "SyncWindows", &(22u64, windows))
         .await
         .unwrap();
@@ -156,7 +162,7 @@ async fn bridge_rejects_non_shell_callers() {
     let _shell = bus.shell().await;
     let intruder = bus.connect().await;
 
-    let err = call::<_, u32>(&intruder, BRIDGE_INTERFACE, "Hello", &(1u32,))
+    let err = call::<_, u32>(&intruder, BRIDGE_INTERFACE, "Hello", &(2u32,))
         .await
         .unwrap_err();
     assert_eq!(error_name(&err), "io.github.liwin.Error.AccessDenied");
@@ -393,4 +399,171 @@ async fn keybindings_are_sent_after_sync_and_trigger_commands() {
         again.is_err(),
         "keybinding table must be sent once per Hello"
     );
+}
+
+async fn next_body<T>(stream: &mut MessageStream) -> T
+where
+    T: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,
+{
+    let msg = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .expect("signal within 2s")
+        .unwrap()
+        .unwrap();
+    msg.body().deserialize::<T>().unwrap()
+}
+
+async fn ack(shell: &Connection, req: u32) {
+    let () = call(
+        shell,
+        BRIDGE_INTERFACE,
+        "RequestCompleted",
+        &(req, true, ""),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn snapshot_is_tiled_into_the_work_area() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let mut layouts = bridge_signals(&shell, "ApplyLayout").await;
+    hello_and_sync(&shell).await;
+    let (batch,): (Vec<Placement>,) = next_body(&mut layouts).await;
+    assert_eq!(
+        batch,
+        vec![(11, 0, 32, 960, 1048), (22, 960, 32, 960, 1048)],
+        "two windows side by side in the 1920x1048+0+32 work area"
+    );
+}
+
+#[tokio::test]
+async fn floating_windows_are_left_alone() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let mut layouts = bridge_signals(&shell, "ApplyLayout").await;
+    hello_and_sync(&shell).await;
+    let _: (Vec<Placement>,) = next_body(&mut layouts).await;
+
+    let dialog: Wire = (33, 0, 0, 10, 10, 300, 200, 1);
+    let () = call(&shell, BRIDGE_INTERFACE, "WindowOpened", &(dialog,))
+        .await
+        .unwrap();
+    let nothing = tokio::time::timeout(Duration::from_millis(200), layouts.next()).await;
+    assert!(
+        nothing.is_err(),
+        "a floating window does not change the layout"
+    );
+}
+
+#[tokio::test]
+async fn window_moved_to_other_workspace_retiles_both() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    let mut layouts = bridge_signals(&shell, "ApplyLayout").await;
+    hello_and_sync(&shell).await;
+    let _: (Vec<Placement>,) = next_body(&mut layouts).await;
+
+    let moved: Wire = (22, 1, 0, 960, 32, 960, 1048, 0);
+    let () = call(&shell, BRIDGE_INTERFACE, "WindowChanged", &(moved,))
+        .await
+        .unwrap();
+    let (mut batch,): (Vec<Placement>,) = next_body(&mut layouts).await;
+    batch.sort();
+    assert_eq!(
+        batch,
+        vec![(11, 0, 32, 1920, 1048), (22, 0, 32, 1920, 1048)]
+    );
+    let out = run(&cli, &["list-windows"]).await.unwrap();
+    assert!(out.contains("22           workspace=2"), "{out}");
+}
+
+#[tokio::test]
+async fn move_and_layout_commands_retile() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    let mut layouts = bridge_signals(&shell, "ApplyLayout").await;
+    hello_and_sync(&shell).await; // h[11 *22]
+    let _: (Vec<Placement>,) = next_body(&mut layouts).await;
+
+    run(&cli, &["move", "left"]).await.unwrap(); // h[*22 11]
+    let (batch,): (Vec<Placement>,) = next_body(&mut layouts).await;
+    assert_eq!(
+        batch,
+        vec![(22, 0, 32, 960, 1048), (11, 960, 32, 960, 1048)]
+    );
+
+    run(&cli, &["layout", "tiles", "horizontal", "vertical"])
+        .await
+        .unwrap(); // v[*22 11]
+    let (batch,): (Vec<Placement>,) = next_body(&mut layouts).await;
+    assert_eq!(batch, vec![(22, 0, 32, 1920, 524), (11, 0, 556, 1920, 524)]);
+
+    // Setting the current orientation again is a no-op.
+    run(&cli, &["layout", "vertical"]).await.unwrap();
+    let nothing = tokio::time::timeout(Duration::from_millis(200), layouts.next()).await;
+    assert!(nothing.is_err());
+}
+
+#[tokio::test]
+async fn workspace_commands_reach_the_shell() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    hello_and_sync(&shell).await;
+
+    let mut activate = bridge_signals(&shell, "ActivateWorkspace").await;
+    let shell2 = shell.clone();
+    let side = tokio::spawn(async move {
+        let (req, ws): (u32, u32) = next_body(&mut activate).await;
+        assert_eq!(ws, 2, "`workspace 3` is GNOME index 2");
+        ack(&shell2, req).await;
+    });
+    run(&cli, &["workspace", "3"]).await.unwrap();
+    side.await.unwrap();
+
+    let mut move_ws = bridge_signals(&shell, "MoveWindowToWorkspace").await;
+    let shell2 = shell.clone();
+    let side = tokio::spawn(async move {
+        let (req, id, ws): (u32, u64, u32) = next_body(&mut move_ws).await;
+        assert_eq!((id, ws), (22, 0));
+        ack(&shell2, req).await;
+    });
+    run(&cli, &["move-node-to-workspace", "1"]).await.unwrap();
+    side.await.unwrap();
+}
+
+#[tokio::test]
+async fn shell_events_are_applied_in_order() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    hello_and_sync(&shell).await;
+
+    // Fire many events without waiting for replies, as the extension does;
+    // the last one must win.
+    for i in 0..200u64 {
+        let id = if i % 2 == 0 { 11u64 } else { 0 };
+        let msg = zbus::Message::method_call(OBJECT_PATH, "FocusChanged")
+            .destination(BUS_NAME)
+            .interface(BRIDGE_INTERFACE)
+            .with_flags(zbus::message::Flags::NO_REPLY_EXPECTED)
+            .build(&(id,))
+            .unwrap();
+        shell.send(&msg).await.unwrap();
+    }
+    let () = call(&shell, BRIDGE_INTERFACE, "FocusChanged", &(22u64,))
+        .await
+        .unwrap();
+    let out = run(&cli, &["list-windows"]).await.unwrap();
+    assert!(out.contains("* 22"), "{out}");
 }

@@ -11,11 +11,18 @@ import GLib from 'gi://GLib';
 export const BUS_NAME = 'io.github.liwin.Daemon';
 export const OBJECT_PATH = '/io/github/liwin/Daemon';
 export const BRIDGE_INTERFACE = 'io.github.liwin.ShellBridge1';
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 const CALL_TIMEOUT_MS = 1000;
 
-/** `(id, workspace, monitor, x, y, width, height)` */
-export type WireWindow = [number, number, number, number, number, number, number];
+/** Workspace index meaning "on all workspaces". */
+export const ALL_WORKSPACES = 0xffffffff;
+/** Window flag: do not tile (not resizable, transient, ...). */
+export const FLAG_FLOATING = 1;
+
+/** `(id, workspace, monitor, x, y, width, height, flags)` */
+export type WireWindow = [number, number, number, number, number, number, number, number];
+/** `(id, x, y, width, height)` */
+export type Placement = [number, number, number, number, number];
 /** `(index, x, y, width, height)` of the monitor's work area */
 export type WireMonitor = [number, number, number, number, number];
 
@@ -28,6 +35,9 @@ export interface DaemonHandlers {
     onMoveResizeWindow(requestId: number, windowId: number, x: number, y: number, w: number, h: number): void;
     onFocusWindow(requestId: number, windowId: number): void;
     onKeybindingsChanged(bindings: [number, string][]): void;
+    onApplyLayout(placements: Placement[]): void;
+    onActivateWorkspace(requestId: number, workspace: number): void;
+    onMoveWindowToWorkspace(requestId: number, windowId: number, workspace: number): void;
 }
 
 export class DaemonClient {
@@ -75,6 +85,24 @@ export class DaemonClient {
             const [req, id] = params.deepUnpack() as [number, number];
             this._handlers.onFocusWindow(req, id);
         });
+        subscribe('ApplyLayout', params => {
+            if (!this._connected)
+                return;
+            const [placements] = params.deepUnpack() as [Placement[]];
+            this._handlers.onApplyLayout(placements);
+        });
+        subscribe('ActivateWorkspace', params => {
+            if (!this._connected)
+                return;
+            const [req, ws] = params.deepUnpack() as [number, number];
+            this._handlers.onActivateWorkspace(req, ws);
+        });
+        subscribe('MoveWindowToWorkspace', params => {
+            if (!this._connected)
+                return;
+            const [req, id, ws] = params.deepUnpack() as [number, number, number];
+            this._handlers.onMoveWindowToWorkspace(req, id, ws);
+        });
         subscribe('KeybindingsChanged', params => {
             if (!this._connected)
                 return;
@@ -112,11 +140,15 @@ export class DaemonClient {
     }
 
     syncWindows(focused: number, windows: WireWindow[]): void {
-        this._call('SyncWindows', new GLib.Variant('(ta(tuiiiii))', [focused, windows]));
+        this._call('SyncWindows', new GLib.Variant('(ta(tuiiiiiu))', [focused, windows]));
     }
 
     windowOpened(window: WireWindow): void {
-        this._call('WindowOpened', new GLib.Variant('((tuiiiii))', [window]));
+        this._call('WindowOpened', new GLib.Variant('((tuiiiiiu))', [window]));
+    }
+
+    windowChanged(window: WireWindow): void {
+        this._call('WindowChanged', new GLib.Variant('((tuiiiiiu))', [window]));
     }
 
     windowClosed(id: number): void {

@@ -28,7 +28,7 @@ pub const BRIDGE_INTERFACE: &str = "io.github.liwin.ShellBridge1";
 /// Its owner is the only peer allowed to use [`BRIDGE_INTERFACE`].
 pub const SHELL_IDENTITY_NAME: &str = "org.gnome.Shell.Introspect";
 /// Version of the extension ⇄ daemon protocol (see `docs/dbus.md`).
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Runtime options of the daemon.
 #[derive(Debug, Clone)]
@@ -39,6 +39,8 @@ pub struct Options {
     pub request_timeout: Duration,
     /// Keybindings of the `main` mode, sent to the extension.
     pub keybindings: Vec<config::KeyBinding>,
+    /// Gaps and default orientation for the tiling layout.
+    pub layout: model::LayoutSettings,
 }
 
 impl Default for Options {
@@ -47,6 +49,7 @@ impl Default for Options {
             enable_debug_commands: false,
             request_timeout: Duration::from_secs(2),
             keybindings: Vec::new(),
+            layout: model::LayoutSettings::default(),
         }
     }
 }

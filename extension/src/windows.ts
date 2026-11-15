@@ -5,10 +5,13 @@
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import type {WireMonitor, WireWindow} from './daemon.js';
+import {ALL_WORKSPACES, FLAG_FLOATING} from './daemon.js';
+import type {Placement, WireMonitor, WireWindow} from './daemon.js';
 
 export interface WindowEvents {
     windowOpened(window: WireWindow): void;
+    /** Workspace, monitor or floating state of a reported window changed. */
+    windowChanged(window: WireWindow): void;
     windowClosed(id: number): void;
     focusChanged(id: number): void;
     monitorsChanged(): void;
@@ -24,13 +27,30 @@ interface Tracked {
 function isManageable(win: Meta.Window): boolean {
     return win.get_window_type() === Meta.WindowType.NORMAL &&
         !win.is_skip_taskbar() &&
-        win.get_workspace() !== null;
+        (win.is_on_all_workspaces() || win.get_workspace() !== null);
+}
+
+/**
+ * Windows that are reported but must not be tiled: transient windows
+ * (dialogs) and fixed-size windows.
+ *
+ * allows_resize() is false while a window is maximized or fullscreen (seen
+ * with GNOME Shell 50: a maximized gnome-text-editor reported false), so it
+ * only says "fixed size" when the window is in neither state. Tiling
+ * unmaximizes windows anyway.
+ */
+function isFloating(win: Meta.Window): boolean {
+    if (win.get_transient_for() !== null)
+        return true;
+    const constrained = win.is_maximized() || win.is_fullscreen();
+    return !constrained && !win.allows_resize();
 }
 
 export function toWire(win: Meta.Window): WireWindow {
     const r = win.get_frame_rect();
-    const ws = win.get_workspace()?.index() ?? 0;
-    return [win.get_id(), ws, win.get_monitor(), r.x, r.y, r.width, r.height];
+    const ws = win.is_on_all_workspaces() ? ALL_WORKSPACES : win.get_workspace()?.index() ?? 0;
+    const flags = isFloating(win) ? FLAG_FLOATING : 0;
+    return [win.get_id(), ws, win.get_monitor(), r.x, r.y, r.width, r.height, flags];
 }
 
 export class WindowTracker {
@@ -45,7 +65,8 @@ export class WindowTracker {
         this._displaySignals.push(
             display.connect('window-created', (_d, win) => this._track(win, false)),
             display.connect('notify::focus-window', () => this._events.focusChanged(this.focusedId())),
-            display.connect('workareas-changed', () => this._events.monitorsChanged()));
+            display.connect('workareas-changed', () => this._events.monitorsChanged()),
+            display.connect('window-entered-monitor', (_d, _monitor, win) => this._changed(win)));
         this._monitorSignals.push(
             Main.layoutManager.connect('monitors-changed', () => this._events.monitorsChanged()));
 
@@ -105,6 +126,32 @@ export class WindowTracker {
         return null;
     }
 
+    applyLayout(placements: Placement[]): void {
+        for (const [id, x, y, w, h] of placements) {
+            const err = this.moveResize(id, x, y, w, h);
+            if (err)
+                console.warn(`liwin: cannot place window ${id}: ${err}`);
+        }
+    }
+
+    activateWorkspace(index: number): string | null {
+        const ws = global.workspace_manager.get_workspace_by_index(index);
+        if (!ws)
+            return 'no-such-workspace';
+        ws.activate(global.get_current_time());
+        return null;
+    }
+
+    moveToWorkspace(id: number, index: number): string | null {
+        const win = this.find(id);
+        if (!win)
+            return 'no-such-window';
+        if (index >= global.workspace_manager.get_n_workspaces())
+            return 'no-such-workspace';
+        win.change_workspace_by_index(index, false);
+        return null;
+    }
+
     focus(id: number): string | null {
         const win = this.find(id);
         if (!win)
@@ -125,6 +172,10 @@ export class WindowTracker {
                 return;
             tracked.announced = true;
             this._events.windowOpened(toWire(win));
+            // Focus usually moves to a new window before it is shown, when it
+            // was not reported yet; report it again now that it is.
+            if (global.display.focus_window === win)
+                this._events.focusChanged(id);
         };
 
         tracked.signalIds.push(
@@ -133,6 +184,8 @@ export class WindowTracker {
             (win as unknown as {connect(s: string, cb: () => void): number})
                 .connect('unmanaged', () => this._untrack(id)));
 
+        tracked.signalIds.push(win.connect('workspace-changed', () => this._changed(win)));
+
         if (existing) {
             // Already mapped windows are part of the initial snapshot.
             tracked.announced = isManageable(win);
@@ -140,6 +193,12 @@ export class WindowTracker {
             // Wait until the window is shown so its type and geometry are final.
             tracked.signalIds.push(win.connect('shown', announce));
         }
+    }
+
+    private _changed(win: Meta.Window): void {
+        const tracked = this._tracked.get(win.get_id());
+        if (tracked?.announced && isManageable(win))
+            this._events.windowChanged(toWire(win));
     }
 
     private _untrack(id: number): void {

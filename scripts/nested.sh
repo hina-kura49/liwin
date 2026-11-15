@@ -30,6 +30,21 @@ rm -rf "$sb/data/gnome-shell/extensions/liwin@kura"
 cp -r "$ext_src" "$sb/data/gnome-shell/extensions/"
 
 export XDG_CONFIG_HOME="$sb/config" XDG_DATA_HOME="$sb/data" XDG_CACHE_HOME="$sb/cache"
+
+# GNOME Shell keeps a crash sentinel (gnome-shell-disable-extensions) in the
+# runtime dir for its first 60 s; if the *logged-in* Shell crashed while a
+# nested one had it there, the user's extensions would be disabled. The
+# headless Shell needs nothing from the real runtime dir, so give it its own.
+# The devkit window must talk to the real compositor and keeps the real one.
+if [[ "$mode" == headless ]]; then
+    # Leftover FUSE mounts from an interrupted run would block the cleanup.
+    for mnt in $(findmnt -rn -o TARGET | grep -F "$sb/run/" || true); do
+        fusermount3 -u -z "$mnt" 2>/dev/null || true
+    done
+    rm -rf "$sb/run"
+    mkdir -m 700 "$sb/run"
+    export XDG_RUNTIME_DIR="$sb/run"
+fi
 export LIWIN_SANDBOX="$sb" LIWIN_MODE="$mode" LIWIN_DAEMON="$daemon"
 # D-Bus-activated helpers (e.g. gnome-shell-calendar-server) can outlive the
 # private bus. Stop exactly the processes carrying our sandbox environment.
@@ -42,5 +57,13 @@ reap_sandbox() {
         fi
     done
 }
-trap reap_sandbox EXIT
+# Helpers of the nested session (gvfsd-fuse, xdg-document-portal) mount FUSE
+# filesystems in a private runtime dir; unmount them once they are gone.
+unmount_sandbox() {
+    local mnt
+    for mnt in $(findmnt -rn -o TARGET | grep -F "$sb/run/" || true); do
+        fusermount3 -u -z "$mnt" 2>/dev/null || fusermount -u -z "$mnt" 2>/dev/null || true
+    done
+}
+trap 'reap_sandbox; sleep 0.5; unmount_sandbox' EXIT
 dbus-run-session -- "$root/scripts/nested-inner.sh"

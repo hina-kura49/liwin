@@ -29,6 +29,7 @@ gsettings set org.gnome.shell welcome-dialog-last-shown-version '999'
 cat > "$sb/env" <<ENV
 export DBUS_SESSION_BUS_ADDRESS='$DBUS_SESSION_BUS_ADDRESS'
 export WAYLAND_DISPLAY='$display'
+export XDG_RUNTIME_DIR='$XDG_RUNTIME_DIR'
 export XDG_CONFIG_HOME='$XDG_CONFIG_HOME' XDG_DATA_HOME='$XDG_DATA_HOME' XDG_CACHE_HOME='$XDG_CACHE_HOME'
 ENV
 

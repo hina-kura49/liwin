@@ -49,3 +49,29 @@ export const SIGNAL_SIGNATURES = {
 
 export type MethodName = keyof typeof METHOD_SIGNATURES;
 export type SignalName = keyof typeof SIGNAL_SIGNATURES;
+
+/** Unpacked arguments of each method, matching METHOD_SIGNATURES. */
+export interface MethodArgs {
+    Hello: [protocolVersion: number];
+    Goodbye: [];
+    SyncMonitors: [monitors: WireMonitor[]];
+    SyncWindows: [focused: number, windows: WireWindow[]];
+    WindowOpened: [window: WireWindow];
+    WindowChanged: [window: WireWindow];
+    WindowClosed: [windowId: number];
+    FocusChanged: [windowId: number];
+    KeybindingTriggered: [bindingId: number];
+    KeybindingsApplied: [rejected: number[]];
+    RequestCompleted: [requestId: number, ok: boolean, error: string];
+}
+
+/** Unpacked arguments of each signal, matching SIGNAL_SIGNATURES. */
+export interface SignalArgs {
+    ApplyLayout: [placements: Placement[]];
+    ActivateWorkspace: [requestId: number, workspace: number];
+    MoveWindowToWorkspace: [requestId: number, windowId: number, workspace: number];
+    MoveResizeWindow: [requestId: number, windowId: number, x: number, y: number, width: number, height: number];
+    FocusWindow: [requestId: number, windowId: number];
+    KeybindingsChanged: [bindings: [number, string][]];
+    ResyncRequested: [];
+}

@@ -8,8 +8,10 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {BRIDGE_INTERFACE, BUS_NAME, OBJECT_PATH, PROTOCOL_VERSION} from './protocol.js';
-import type {Placement, WireMonitor, WireWindow} from './protocol.js';
+import {
+    BRIDGE_INTERFACE, BUS_NAME, METHOD_SIGNATURES, OBJECT_PATH, PROTOCOL_VERSION, SIGNAL_SIGNATURES,
+} from './protocol.js';
+import type {MethodArgs, MethodName, Placement, SignalArgs, SignalName, WireMonitor, WireWindow} from './protocol.js';
 
 const CALL_TIMEOUT_MS = 1000;
 
@@ -27,6 +29,15 @@ export interface DaemonHandlers {
     onMoveWindowToWorkspace(requestId: number, windowId: number, workspace: number): void;
 }
 
+/** How to dispatch each daemon signal. */
+type SignalTable = {
+    [S in SignalName]: {
+        /** Also handled before Hello succeeded. */
+        whileDisconnected?: boolean;
+        handle(...args: SignalArgs[S]): void;
+    };
+};
+
 export class DaemonClient {
     private readonly _conn: Gio.DBusConnection;
     private readonly _handlers: DaemonHandlers;
@@ -42,60 +53,9 @@ export class DaemonClient {
         // org.gnome.Shell.Introspect, which Shell owns on this connection.
         this._conn = Gio.DBus.session;
 
-        const subscribe = (member: string, cb: (params: GLib.Variant) => void) => {
-            this._subscriptions.push(this._conn.signal_subscribe(
-                BUS_NAME, BRIDGE_INTERFACE, member, OBJECT_PATH, null,
-                Gio.DBusSignalFlags.NONE,
-                (_conn, _sender, _path, _iface, _member, params) => {
-                    try {
-                        cb(params);
-                    } catch (e) {
-                        console.error(`liwin: error handling ${member}:`, e);
-                    }
-                }));
-        };
-        subscribe('ResyncRequested', () => {
-            if (this._connected)
-                this._handlers.onResyncRequested();
-            else
-                this._hello();
-        });
-        subscribe('MoveResizeWindow', params => {
-            if (!this._connected)
-                return;
-            const [req, id, x, y, w, h] = params.deepUnpack() as [number, number, number, number, number, number];
-            this._handlers.onMoveResizeWindow(req, id, x, y, w, h);
-        });
-        subscribe('FocusWindow', params => {
-            if (!this._connected)
-                return;
-            const [req, id] = params.deepUnpack() as [number, number];
-            this._handlers.onFocusWindow(req, id);
-        });
-        subscribe('ApplyLayout', params => {
-            if (!this._connected)
-                return;
-            const [placements] = params.deepUnpack() as [Placement[]];
-            this._handlers.onApplyLayout(placements);
-        });
-        subscribe('ActivateWorkspace', params => {
-            if (!this._connected)
-                return;
-            const [req, ws] = params.deepUnpack() as [number, number];
-            this._handlers.onActivateWorkspace(req, ws);
-        });
-        subscribe('MoveWindowToWorkspace', params => {
-            if (!this._connected)
-                return;
-            const [req, id, ws] = params.deepUnpack() as [number, number, number];
-            this._handlers.onMoveWindowToWorkspace(req, id, ws);
-        });
-        subscribe('KeybindingsChanged', params => {
-            if (!this._connected)
-                return;
-            const [bindings] = params.deepUnpack() as [[number, string][]];
-            this._handlers.onKeybindingsChanged(bindings);
-        });
+        const table = this._signalTable();
+        for (const member of Object.keys(table) as SignalName[])
+            this._subscribe(member, table[member]);
 
         // GJS override: DBusConnection.watch_name(name, flags, appeared, vanished).
         this._watchId = this._conn.watch_name(BUS_NAME, Gio.BusNameWatcherFlags.NONE,
@@ -123,43 +83,86 @@ export class DaemonClient {
     }
 
     syncMonitors(monitors: WireMonitor[]): void {
-        this._call('SyncMonitors', new GLib.Variant('(a(iiiii))', [monitors]));
+        this._call('SyncMonitors', monitors);
     }
 
     syncWindows(focused: number, windows: WireWindow[]): void {
-        this._call('SyncWindows', new GLib.Variant('(ta(tuiiiiiu))', [focused, windows]));
+        this._call('SyncWindows', focused, windows);
     }
 
     windowOpened(window: WireWindow): void {
-        this._call('WindowOpened', new GLib.Variant('((tuiiiiiu))', [window]));
+        this._call('WindowOpened', window);
     }
 
     windowChanged(window: WireWindow): void {
-        this._call('WindowChanged', new GLib.Variant('((tuiiiiiu))', [window]));
+        this._call('WindowChanged', window);
     }
 
     windowClosed(id: number): void {
-        this._call('WindowClosed', new GLib.Variant('(t)', [id]));
+        this._call('WindowClosed', id);
     }
 
     focusChanged(id: number): void {
-        this._call('FocusChanged', new GLib.Variant('(t)', [id]));
+        this._call('FocusChanged', id);
     }
 
     keybindingTriggered(bindingId: number): void {
-        this._call('KeybindingTriggered', new GLib.Variant('(u)', [bindingId]));
+        this._call('KeybindingTriggered', bindingId);
     }
 
     keybindingsApplied(rejected: number[]): void {
-        this._call('KeybindingsApplied', new GLib.Variant('(au)', [rejected]));
+        this._call('KeybindingsApplied', rejected);
     }
 
     requestCompleted(requestId: number, ok: boolean, error: string): void {
-        this._call('RequestCompleted', new GLib.Variant('(ubs)', [requestId, ok, error]));
+        this._call('RequestCompleted', requestId, ok, error);
+    }
+
+    private _signalTable(): SignalTable {
+        const h = this._handlers;
+        return {
+            ResyncRequested: {
+                whileDisconnected: true,
+                handle: () => {
+                    if (this._connected)
+                        h.onResyncRequested();
+                    else
+                        this._hello();
+                },
+            },
+            MoveResizeWindow: {handle: (req, id, x, y, w, hh) => h.onMoveResizeWindow(req, id, x, y, w, hh)},
+            FocusWindow: {handle: (req, id) => h.onFocusWindow(req, id)},
+            ApplyLayout: {handle: placements => h.onApplyLayout(placements)},
+            ActivateWorkspace: {handle: (req, ws) => h.onActivateWorkspace(req, ws)},
+            MoveWindowToWorkspace: {handle: (req, id, ws) => h.onMoveWindowToWorkspace(req, id, ws)},
+            KeybindingsChanged: {handle: bindings => h.onKeybindingsChanged(bindings)},
+        };
+    }
+
+    private _subscribe<S extends SignalName>(member: S, entry: SignalTable[S]): void {
+        const signature = SIGNAL_SIGNATURES[member];
+        this._subscriptions.push(this._conn.signal_subscribe(
+            BUS_NAME, BRIDGE_INTERFACE, member, OBJECT_PATH, null,
+            Gio.DBusSignalFlags.NONE,
+            (_conn, _sender, _path, _iface, _member, params) => {
+                if (!this._connected && !entry.whileDisconnected)
+                    return;
+                const type = params?.get_type_string() ?? '()';
+                if (type !== signature) {
+                    console.warn(`liwin: ignoring ${member} with signature ${type}, expected ${signature}`);
+                    return;
+                }
+                try {
+                    const args = (params?.deepUnpack() ?? []) as SignalArgs[S];
+                    (entry.handle as (...a: SignalArgs[S]) => void)(...args);
+                } catch (e) {
+                    console.error(`liwin: error handling ${member}:`, e);
+                }
+            }));
     }
 
     private _hello(): void {
-        this._callRaw('Hello', new GLib.Variant('(u)', [PROTOCOL_VERSION]), reply => {
+        this._callRaw('Hello', [PROTOCOL_VERSION], reply => {
             const [version] = reply.deepUnpack() as [number];
             if (version !== PROTOCOL_VERSION) {
                 console.error(`liwin: daemon speaks protocol ${version}, extension speaks ${PROTOCOL_VERSION}; staying idle`);
@@ -180,12 +183,15 @@ export class DaemonClient {
     }
 
     /** Fire-and-forget call; only sent while connected. */
-    private _call(method: string, params: GLib.Variant): void {
+    private _call<M extends MethodName>(method: M, ...args: MethodArgs[M]): void {
         if (this._connected)
-            this._callRaw(method, params, () => {});
+            this._callRaw(method, args, () => {});
     }
 
-    private _callRaw(method: string, params: GLib.Variant, onReply: (reply: GLib.Variant) => void): void {
+    private _callRaw<M extends MethodName>(method: M, args: MethodArgs[M], onReply: (reply: GLib.Variant) => void): void {
+        // MethodArgs mirrors METHOD_SIGNATURES; the GVariant typing of
+        // @girs cannot follow the generic index, hence the cast.
+        const params = new GLib.Variant(METHOD_SIGNATURES[method] as string, args as any);
         this._conn.call(BUS_NAME, OBJECT_PATH, BRIDGE_INTERFACE, method, params, null,
             Gio.DBusCallFlags.NO_AUTO_START, CALL_TIMEOUT_MS, this._cancellable,
             (conn, res) => {

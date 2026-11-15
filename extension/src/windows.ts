@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Observes Meta windows and executes primitive window commands.
-// No layout logic lives here.
+// Observes Meta windows and reports them (see commands.ts for the primitive
+// commands the daemon sends). No layout logic lives here.
 
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -8,7 +8,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {windowFlags} from './floating.js';
 import type {WindowState} from './floating.js';
 import {ALL_WORKSPACES} from './protocol.js';
-import type {Placement, WireMonitor, WireWindow} from './protocol.js';
+import type {WireMonitor, WireWindow} from './protocol.js';
 
 export interface WindowEvents {
     windowOpened(window: WireWindow): void;
@@ -106,53 +106,6 @@ export class WindowTracker {
 
     find(id: number): Meta.Window | null {
         return this._tracked.get(id)?.window ?? null;
-    }
-
-    /** Returns an error reason, or null on success. */
-    moveResize(id: number, x: number, y: number, w: number, h: number): string | null {
-        const win = this.find(id);
-        if (!win)
-            return 'no-such-window';
-        if (win.is_fullscreen())
-            win.unmake_fullscreen();
-        if (win.is_maximized())
-            win.unmaximize();
-        win.move_resize_frame(false, x, y, w, h);
-        return null;
-    }
-
-    applyLayout(placements: Placement[]): void {
-        for (const [id, x, y, w, h] of placements) {
-            const err = this.moveResize(id, x, y, w, h);
-            if (err)
-                console.warn(`liwin: cannot place window ${id}: ${err}`);
-        }
-    }
-
-    activateWorkspace(index: number): string | null {
-        const ws = global.workspace_manager.get_workspace_by_index(index);
-        if (!ws)
-            return 'no-such-workspace';
-        ws.activate(global.get_current_time());
-        return null;
-    }
-
-    moveToWorkspace(id: number, index: number): string | null {
-        const win = this.find(id);
-        if (!win)
-            return 'no-such-window';
-        if (index >= global.workspace_manager.get_n_workspaces())
-            return 'no-such-workspace';
-        win.change_workspace_by_index(index, false);
-        return null;
-    }
-
-    focus(id: number): string | null {
-        const win = this.find(id);
-        if (!win)
-            return 'no-such-window';
-        win.activate(global.get_current_time());
-        return null;
     }
 
     private _track(win: Meta.Window, existing: boolean): void {

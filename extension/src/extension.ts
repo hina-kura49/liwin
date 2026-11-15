@@ -7,6 +7,7 @@
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {WindowCommands} from './commands.js';
 import {DaemonClient} from './daemon.js';
 import {KeybindingManager} from './keybindings.js';
 import {WindowTracker} from './windows.js';
@@ -14,6 +15,7 @@ import {WindowTracker} from './windows.js';
 class Liwin {
     private readonly _daemon: DaemonClient;
     private readonly _windows: WindowTracker;
+    private readonly _commands: WindowCommands;
     private readonly _keys: KeybindingManager;
 
     constructor() {
@@ -25,28 +27,21 @@ class Liwin {
             focusChanged: id => this._daemon.focusChanged(id),
             monitorsChanged: () => this._daemon.syncMonitors(this._windows.monitors()),
         });
+        this._commands = new WindowCommands(id => this._windows.find(id));
         this._daemon = new DaemonClient({
             onConnected: () => this._sendSnapshot(),
             onResyncRequested: () => this._sendSnapshot(),
             // Do not keep keys grabbed on behalf of a daemon that is gone.
             onDisconnected: () => this._keys.clear(),
-            onMoveResizeWindow: (req, id, x, y, w, h) => {
-                const err = this._windows.moveResize(id, x, y, w, h);
-                this._daemon.requestCompleted(req, err === null, err ?? '');
-            },
-            onApplyLayout: placements => this._windows.applyLayout(placements),
-            onActivateWorkspace: (req, ws) => {
-                const err = this._windows.activateWorkspace(ws);
-                this._daemon.requestCompleted(req, err === null, err ?? '');
-            },
-            onMoveWindowToWorkspace: (req, id, ws) => {
-                const err = this._windows.moveToWorkspace(id, ws);
-                this._daemon.requestCompleted(req, err === null, err ?? '');
-            },
-            onFocusWindow: (req, id) => {
-                const err = this._windows.focus(id);
-                this._daemon.requestCompleted(req, err === null, err ?? '');
-            },
+            onMoveResizeWindow: (req, id, x, y, w, h) =>
+                this._complete(req, this._commands.moveResize(id, x, y, w, h)),
+            onApplyLayout: placements => this._commands.applyLayout(placements),
+            onActivateWorkspace: (req, ws) =>
+                this._complete(req, this._commands.activateWorkspace(ws)),
+            onMoveWindowToWorkspace: (req, id, ws) =>
+                this._complete(req, this._commands.moveToWorkspace(id, ws)),
+            onFocusWindow: (req, id) =>
+                this._complete(req, this._commands.focus(id)),
             onKeybindingsChanged: bindings => {
                 const rejected = this._keys.set(bindings);
                 console.log(`liwin: ${bindings.length - rejected.length}/${bindings.length} keybindings grabbed`);
@@ -59,6 +54,11 @@ class Liwin {
         this._daemon.destroy();
         this._keys.destroy();
         this._windows.destroy();
+    }
+
+    /** Reports the outcome of a primitive command (`error` null on success). */
+    private _complete(requestId: number, error: string | null): void {
+        this._daemon.requestCompleted(requestId, error === null, error ?? '');
     }
 
     private _sendSnapshot(): void {

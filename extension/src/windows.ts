@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Observes Meta windows and executes primitive window commands.
-// No layout logic lives here.
+// Observes Meta windows and reports them (see commands.ts for the primitive
+// commands the daemon sends). No layout logic lives here.
 
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {ALL_WORKSPACES, FLAG_FLOATING} from './daemon.js';
-import type {Placement, WireMonitor, WireWindow} from './daemon.js';
+import {windowFlags} from './floating.js';
+import type {WindowState} from './floating.js';
+import {ALL_WORKSPACES} from './protocol.js';
+import type {WireMonitor, WireWindow} from './protocol.js';
 
 export interface WindowEvents {
     windowOpened(window: WireWindow): void;
@@ -30,27 +32,20 @@ function isManageable(win: Meta.Window): boolean {
         (win.is_on_all_workspaces() || win.get_workspace() !== null);
 }
 
-/**
- * Windows that are reported but must not be tiled: transient windows
- * (dialogs) and fixed-size windows.
- *
- * allows_resize() is false while a window is maximized or fullscreen (seen
- * with GNOME Shell 50: a maximized gnome-text-editor reported false), so it
- * only says "fixed size" when the window is in neither state. Tiling
- * unmaximizes windows anyway.
- */
-function isFloating(win: Meta.Window): boolean {
-    if (win.get_transient_for() !== null)
-        return true;
-    const constrained = win.is_maximized() || win.is_fullscreen();
-    return !constrained && !win.allows_resize();
+/** The inputs of the floating decision (see floating.ts). */
+function windowState(win: Meta.Window): WindowState {
+    return {
+        transient: win.get_transient_for() !== null,
+        maximized: win.is_maximized(),
+        fullscreen: win.is_fullscreen(),
+        allowsResize: win.allows_resize(),
+    };
 }
 
 export function toWire(win: Meta.Window): WireWindow {
     const r = win.get_frame_rect();
     const ws = win.is_on_all_workspaces() ? ALL_WORKSPACES : win.get_workspace()?.index() ?? 0;
-    const flags = isFloating(win) ? FLAG_FLOATING : 0;
-    return [win.get_id(), ws, win.get_monitor(), r.x, r.y, r.width, r.height, flags];
+    return [win.get_id(), ws, win.get_monitor(), r.x, r.y, r.width, r.height, windowFlags(windowState(win))];
 }
 
 export class WindowTracker {
@@ -111,53 +106,6 @@ export class WindowTracker {
 
     find(id: number): Meta.Window | null {
         return this._tracked.get(id)?.window ?? null;
-    }
-
-    /** Returns an error reason, or null on success. */
-    moveResize(id: number, x: number, y: number, w: number, h: number): string | null {
-        const win = this.find(id);
-        if (!win)
-            return 'no-such-window';
-        if (win.is_fullscreen())
-            win.unmake_fullscreen();
-        if (win.is_maximized())
-            win.unmaximize();
-        win.move_resize_frame(false, x, y, w, h);
-        return null;
-    }
-
-    applyLayout(placements: Placement[]): void {
-        for (const [id, x, y, w, h] of placements) {
-            const err = this.moveResize(id, x, y, w, h);
-            if (err)
-                console.warn(`liwin: cannot place window ${id}: ${err}`);
-        }
-    }
-
-    activateWorkspace(index: number): string | null {
-        const ws = global.workspace_manager.get_workspace_by_index(index);
-        if (!ws)
-            return 'no-such-workspace';
-        ws.activate(global.get_current_time());
-        return null;
-    }
-
-    moveToWorkspace(id: number, index: number): string | null {
-        const win = this.find(id);
-        if (!win)
-            return 'no-such-window';
-        if (index >= global.workspace_manager.get_n_workspaces())
-            return 'no-such-workspace';
-        win.change_workspace_by_index(index, false);
-        return null;
-    }
-
-    focus(id: number): string | null {
-        const win = this.find(id);
-        if (!win)
-            return 'no-such-window';
-        win.activate(global.get_current_time());
-        return null;
     }
 
     private _track(win: Meta.Window, existing: boolean): void {

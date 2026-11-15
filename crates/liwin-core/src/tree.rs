@@ -5,10 +5,17 @@
 //! vertical) and whose leaves are windows. The root is always a container and
 //! is never removed, even when empty.
 //!
-//! Invariants maintained after every public operation:
-//! - every non-root container has at least two children (normalization);
+//! Invariants maintained after every public operation (checked by
+//! [`Tree::check_invariants`]):
+//! - every non-root container has at least two children (normalization),
+//!   except a *pending split*: [`Tree::split`] wraps the focused window
+//!   alone in a container so the next window lands next to it. A lone child
+//!   is therefore always a window, never a container;
 //! - the root never has a single child that is itself a container;
-//! - `focused` is `Some` iff the tree contains at least one window.
+//! - parent links match child lists, every live node is reachable from the
+//!   root exactly once, and every window is indexed;
+//! - `focused` is `Some` iff the tree contains at least one window, and then
+//!   points to one of its windows.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -148,32 +155,22 @@ impl Tree {
     }
 
     /// Removes a window and normalizes the tree. If the removed window was
-    /// focused, focus moves to its previous sibling (or the next one).
+    /// focused, focus moves to the nearest window before it (or after it, if
+    /// it was first) in its container, or in the closest ancestor where it has
+    /// siblings.
     pub fn remove_window(&mut self, window: WindowId) -> Result<(), TreeError> {
         let node = self
             .windows
             .remove(&window)
             .ok_or(TreeError::NoSuchWindow(window))?;
+        if self.focused == Some(node) {
+            // Picked before detaching: windows survive normalization.
+            self.focused = self.neighbor_leaf(node);
+        }
         let (parent, index) = self.position(node).expect("window node has a parent");
         self.children_mut(parent).remove(index);
         self.release(node);
-
-        if self.focused == Some(node) {
-            let siblings = self.children(parent);
-            self.focused = if index > 0 {
-                Some(self.last_leaf(siblings[index - 1]))
-            } else if let Some(&next) = siblings.first() {
-                Some(self.first_leaf(next))
-            } else {
-                None
-            };
-        }
-
         self.normalize_upwards(parent);
-
-        if self.focused.is_none() && !self.windows.is_empty() {
-            self.focused = Some(self.first_leaf(self.root));
-        }
         Ok(())
     }
 
@@ -219,18 +216,10 @@ impl Tree {
     pub fn focus(&mut self, direction: Direction) -> Result<bool, TreeError> {
         let mut current = self.focused.ok_or(TreeError::NoFocusedWindow)?;
         while let Some((parent, index)) = self.position(current) {
-            if self.orientation(parent) == direction.orientation() {
-                let len = self.children(parent).len();
-                let target = if direction.is_forward() {
-                    (index + 1 < len).then_some(index + 1)
-                } else {
-                    index.checked_sub(1)
-                };
-                if let Some(target) = target {
-                    let sibling = self.children(parent)[target];
-                    self.focused = Some(self.descend(sibling, direction));
-                    return Ok(true);
-                }
+            if let Some(target) = self.sibling_index(parent, index, direction) {
+                let sibling = self.children(parent)[target];
+                self.focused = Some(self.descend(sibling, direction));
+                return Ok(true);
             }
             current = parent;
         }
@@ -277,37 +266,50 @@ impl Tree {
     /// - no such ancestor: the root is re-oriented along the axis and the
     ///   window placed at that edge, the rest of the tree on the other side.
     ///
-    /// The window keeps focus. Returns `Ok(false)` if nothing moved.
+    /// A pending split around the window (see [`Tree::split`]) is dropped
+    /// first, so the window moves relative to what is visible.
+    ///
+    /// The window keeps focus. Returns `Ok(false)` if nothing moved, in which
+    /// case the tree is unchanged.
     pub fn move_focused(&mut self, direction: Direction) -> Result<bool, TreeError> {
         let focused = self.focused.ok_or(TreeError::NoFocusedWindow)?;
+        let (parent, _) = self.position(focused).expect("focused node has a parent");
+        let pending_split = (parent != self.root && self.children(parent).len() == 1)
+            .then(|| self.orientation(parent));
+        if pending_split.is_some() {
+            self.normalize_upwards(parent);
+        }
+        let moved = self.move_window(focused, direction);
+        if let (false, Some(orientation)) = (moved, pending_split) {
+            self.split(orientation)?;
+        }
+        Ok(moved)
+    }
+
+    /// Moves window node `focused` as described in [`Tree::move_focused`].
+    fn move_window(&mut self, focused: NodeId, direction: Direction) -> bool {
         let axis = direction.orientation();
         let forward = direction.is_forward();
         let (parent, index) = self.position(focused).expect("focused node has a parent");
 
-        if self.orientation(parent) == axis {
-            let len = self.children(parent).len();
-            let target = if forward {
-                (index + 1 < len).then_some(index + 1)
-            } else {
-                index.checked_sub(1)
-            };
-            if let Some(target) = target {
-                let sibling = self.children(parent)[target];
-                if self.is_container(sibling) {
-                    self.children_mut(parent).remove(index);
-                    let at = if forward {
-                        0
-                    } else {
-                        self.children(sibling).len()
-                    };
-                    self.children_mut(sibling).insert(at, focused);
-                    self.node_mut(focused).parent = Some(sibling);
-                    self.normalize_upwards(parent);
+        if let Some(target) = self.sibling_index(parent, index, direction) {
+            let sibling = self.children(parent)[target];
+            // A pending split (a lone window in a container) looks like a
+            // window, so it is swapped with like one.
+            if self.children(sibling).len() > 1 {
+                self.children_mut(parent).remove(index);
+                let at = if forward {
+                    0
                 } else {
-                    self.children_mut(parent).swap(index, target);
-                }
-                return Ok(true);
+                    self.children(sibling).len()
+                };
+                self.children_mut(sibling).insert(at, focused);
+                self.node_mut(focused).parent = Some(sibling);
+                self.normalize_upwards(parent);
+            } else {
+                self.children_mut(parent).swap(index, target);
             }
+            return true;
         }
 
         // Move out of the current container.
@@ -323,7 +325,7 @@ impl Tree {
                 self.children_mut(ancestor).insert(at, focused);
                 self.node_mut(focused).parent = Some(ancestor);
                 self.normalize_upwards(parent);
-                return Ok(true);
+                return true;
             }
             branch = ancestor;
         }
@@ -332,7 +334,7 @@ impl Tree {
         // the window is already at the edge.
         let root = self.root;
         if self.orientation(root) == axis || self.children(root).len() < 2 {
-            return Ok(false);
+            return false;
         }
         self.children_mut(parent).remove(index);
         self.normalize_upwards(parent);
@@ -364,7 +366,7 @@ impl Tree {
             orientation: axis,
             children,
         };
-        Ok(true)
+        true
     }
 
     /// Compact textual representation, mainly for tests and debugging.
@@ -375,6 +377,98 @@ impl Tree {
         let mut s = String::new();
         self.dump_node(self.root, &mut s);
         s
+    }
+
+    /// Verifies the structural invariants listed in the module documentation
+    /// and returns a description of the first violation found.
+    ///
+    /// Meant for tests (including other crates' tests); it walks the whole
+    /// arena, so it is not free.
+    #[doc(hidden)]
+    pub fn check_invariants(&self) -> Result<(), String> {
+        let Some(root_node) = self.nodes.get(self.root.0).and_then(Option::as_ref) else {
+            return Err("root slot is empty".into());
+        };
+        if root_node.parent.is_some() {
+            return Err("root has a parent".into());
+        }
+        if !self.is_container(self.root) {
+            return Err("root is not a container".into());
+        }
+        if let [only] = self.children(self.root)
+            && self.is_container(*only)
+        {
+            return Err(format!(
+                "root has a single container child: {}",
+                self.dump()
+            ));
+        }
+
+        let mut seen = vec![false; self.nodes.len()];
+        let mut stack = vec![self.root];
+        let mut window_count = 0;
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id.0).and_then(Option::as_ref) else {
+                return Err(format!("dangling node id {}", id.0));
+            };
+            if std::mem::replace(&mut seen[id.0], true) {
+                return Err(format!("node {} is reachable twice", id.0));
+            }
+            match &node.kind {
+                Kind::Window(w) => {
+                    window_count += 1;
+                    if self.windows.get(w) != Some(&id) {
+                        return Err(format!("window {w} is not indexed at node {}", id.0));
+                    }
+                }
+                Kind::Container { children, .. } => {
+                    if id != self.root {
+                        match children.as_slice() {
+                            [] => return Err(format!("empty non-root container {}", id.0)),
+                            [only] if self.is_container(*only) => {
+                                return Err(format!(
+                                    "container {} wraps a lone container: {}",
+                                    id.0,
+                                    self.dump()
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    for &c in children {
+                        match self.nodes.get(c.0).and_then(Option::as_ref) {
+                            Some(child) if child.parent == Some(id) => stack.push(c),
+                            Some(_) => {
+                                return Err(format!("node {} has a wrong parent link", c.0));
+                            }
+                            None => return Err(format!("dangling child id {}", c.0)),
+                        }
+                    }
+                }
+            }
+        }
+        if window_count != self.windows.len() {
+            return Err(format!(
+                "{window_count} windows reachable, {} indexed",
+                self.windows.len()
+            ));
+        }
+        for (slot, node) in self.nodes.iter().enumerate() {
+            let free = self.free.contains(&slot);
+            match (node.is_some(), free, seen[slot]) {
+                (true, false, true) | (false, true, false) => {}
+                _ => return Err(format!("slot {slot} leaked or double-freed")),
+            }
+        }
+        match self.focused {
+            None if !self.windows.is_empty() => Err("no focus in a non-empty tree".into()),
+            None => Ok(()),
+            Some(f) if !seen.get(f.0).copied().unwrap_or(false) => {
+                Err(format!("focus points to unreachable node {}", f.0))
+            }
+            Some(f) if self.is_container(f) => Err("focus points to a container".into()),
+            Some(_) => Ok(()),
+        }
     }
 
     // ----- internals -------------------------------------------------------
@@ -464,6 +558,37 @@ impl Tree {
             id = last;
         }
         id
+    }
+
+    /// Index of the sibling of `parent`'s child `index` in `direction`, if
+    /// `parent` is laid out along the direction's axis and has one.
+    fn sibling_index(&self, parent: NodeId, index: usize, direction: Direction) -> Option<usize> {
+        if self.orientation(parent) != direction.orientation() {
+            return None;
+        }
+        if direction.is_forward() {
+            (index + 1 < self.children(parent).len()).then_some(index + 1)
+        } else {
+            index.checked_sub(1)
+        }
+    }
+
+    /// The window closest to `id` in tree order, looking first among its
+    /// siblings and then among those of its ancestors: the last window of
+    /// the previous sibling, or the first window of the next one. `None` if
+    /// `id` holds the tree's only windows.
+    fn neighbor_leaf(&self, mut id: NodeId) -> Option<NodeId> {
+        while let Some((parent, index)) = self.position(id) {
+            let siblings = self.children(parent);
+            if index > 0 {
+                return Some(self.last_leaf(siblings[index - 1]));
+            }
+            if let Some(&next) = siblings.get(1) {
+                return Some(self.first_leaf(next));
+            }
+            id = parent;
+        }
+        None
     }
 
     /// Picks the leaf to focus when entering `id` while moving in `direction`:
@@ -594,6 +719,9 @@ impl Tree {
 }
 
 #[cfg(test)]
+mod proptests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use Direction::*;
@@ -652,6 +780,23 @@ mod tests {
         t.focus_window(1).unwrap();
         t.remove_window(1).unwrap();
         assert_eq!(t.dump(), "h[*2]");
+    }
+
+    #[test]
+    fn remove_from_pending_split_focuses_neighbor() {
+        // Found by property testing: focus used to jump to the first window
+        // of the tree (0) instead of the removed window's neighbor (1).
+        let mut t = tree_with(&[0, 1, 8]);
+        t.split(Horizontal).unwrap();
+        assert_eq!(t.dump(), "h[0 1 h[*8]]");
+        t.remove_window(8).unwrap();
+        assert_eq!(t.dump(), "h[0 *1]");
+
+        let mut t = tree_with(&[1, 2, 3]);
+        t.focus_window(1).unwrap();
+        t.split(Vertical).unwrap();
+        t.remove_window(1).unwrap();
+        assert_eq!(t.dump(), "h[*2 3]");
     }
 
     #[test]
@@ -896,6 +1041,45 @@ mod tests {
         assert_eq!(t.move_focused(Left), Ok(false));
         assert_eq!(t.move_focused(Up), Ok(false));
         assert_eq!(t.dump(), "h[*1]");
+    }
+
+    #[test]
+    fn move_out_of_pending_split_moves_visibly() {
+        // Found by property testing: the window used to leave its lone
+        // wrapper and land in the same spot, reporting a move that did not
+        // change the layout.
+        let mut t = Tree::new(Vertical);
+        t.add_window(1).unwrap();
+        t.add_window(0).unwrap();
+        t.focus_window(1).unwrap();
+        t.split(Horizontal).unwrap();
+        assert_eq!(t.dump(), "v[h[*1] 0]");
+        assert_eq!(t.move_focused(Up), Ok(false), "already at the top");
+        assert_eq!(t.dump(), "v[h[*1] 0]");
+        assert_eq!(t.move_focused(Down), Ok(true));
+        assert_eq!(t.dump(), "v[0 *1]");
+
+        let mut t = tree_with(&[1, 2]);
+        t.split(Vertical).unwrap();
+        assert_eq!(t.dump(), "h[1 v[*2]]");
+        assert_eq!(t.move_focused(Left), Ok(true));
+        assert_eq!(t.dump(), "h[*2 1]");
+
+        // A pending split next to the window is swapped with, not entered.
+        let mut t = tree_with(&[2, 0]);
+        t.split(Horizontal).unwrap();
+        t.focus_window(2).unwrap();
+        assert_eq!(t.dump(), "h[*2 h[0]]");
+        assert_eq!(t.move_focused(Right), Ok(true));
+        assert_eq!(t.dump(), "h[h[0] *2]");
+    }
+
+    #[test]
+    fn move_at_edge_keeps_pending_split() {
+        let mut t = tree_with(&[1, 2]);
+        t.split(Vertical).unwrap();
+        assert_eq!(t.move_focused(Right), Ok(false));
+        assert_eq!(t.dump(), "h[1 v[*2]]");
     }
 
     #[test]

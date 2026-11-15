@@ -216,18 +216,10 @@ impl Tree {
     pub fn focus(&mut self, direction: Direction) -> Result<bool, TreeError> {
         let mut current = self.focused.ok_or(TreeError::NoFocusedWindow)?;
         while let Some((parent, index)) = self.position(current) {
-            if self.orientation(parent) == direction.orientation() {
-                let len = self.children(parent).len();
-                let target = if direction.is_forward() {
-                    (index + 1 < len).then_some(index + 1)
-                } else {
-                    index.checked_sub(1)
-                };
-                if let Some(target) = target {
-                    let sibling = self.children(parent)[target];
-                    self.focused = Some(self.descend(sibling, direction));
-                    return Ok(true);
-                }
+            if let Some(target) = self.sibling_index(parent, index, direction) {
+                let sibling = self.children(parent)[target];
+                self.focused = Some(self.descend(sibling, direction));
+                return Ok(true);
             }
             current = parent;
         }
@@ -300,32 +292,24 @@ impl Tree {
         let forward = direction.is_forward();
         let (parent, index) = self.position(focused).expect("focused node has a parent");
 
-        if self.orientation(parent) == axis {
-            let len = self.children(parent).len();
-            let target = if forward {
-                (index + 1 < len).then_some(index + 1)
-            } else {
-                index.checked_sub(1)
-            };
-            if let Some(target) = target {
-                let sibling = self.children(parent)[target];
-                // A pending split (a lone window in a container) looks like
-                // a window, so it is swapped with like one.
-                if self.children(sibling).len() > 1 {
-                    self.children_mut(parent).remove(index);
-                    let at = if forward {
-                        0
-                    } else {
-                        self.children(sibling).len()
-                    };
-                    self.children_mut(sibling).insert(at, focused);
-                    self.node_mut(focused).parent = Some(sibling);
-                    self.normalize_upwards(parent);
+        if let Some(target) = self.sibling_index(parent, index, direction) {
+            let sibling = self.children(parent)[target];
+            // A pending split (a lone window in a container) looks like a
+            // window, so it is swapped with like one.
+            if self.children(sibling).len() > 1 {
+                self.children_mut(parent).remove(index);
+                let at = if forward {
+                    0
                 } else {
-                    self.children_mut(parent).swap(index, target);
-                }
-                return true;
+                    self.children(sibling).len()
+                };
+                self.children_mut(sibling).insert(at, focused);
+                self.node_mut(focused).parent = Some(sibling);
+                self.normalize_upwards(parent);
+            } else {
+                self.children_mut(parent).swap(index, target);
             }
+            return true;
         }
 
         // Move out of the current container.
@@ -574,6 +558,19 @@ impl Tree {
             id = last;
         }
         id
+    }
+
+    /// Index of the sibling of `parent`'s child `index` in `direction`, if
+    /// `parent` is laid out along the direction's axis and has one.
+    fn sibling_index(&self, parent: NodeId, index: usize, direction: Direction) -> Option<usize> {
+        if self.orientation(parent) != direction.orientation() {
+            return None;
+        }
+        if direction.is_forward() {
+            (index + 1 < self.children(parent).len()).then_some(index + 1)
+        } else {
+            index.checked_sub(1)
+        }
     }
 
     /// The window closest to `id` in tree order, looking first among its

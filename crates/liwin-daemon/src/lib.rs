@@ -9,6 +9,7 @@ pub mod bridge;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod exec;
 pub mod model;
 pub mod service;
 

@@ -194,5 +194,10 @@ Neither side requires the other to be running first:
 - Both nested modes run with `XDG_CONFIG_HOME`/`XDG_DATA_HOME` pointing into
   `.sandbox/`, so enabling the extension in the nested Shell does not touch the
   logged-in session's dconf (`enabled-extensions`) or extension directory.
+- The nested Shell runs without an input method: `ibus-daemon` is shadowed by
+  a no-op in `.sandbox/bin` and input sources are set to `xkb us`. A nested
+  IBus shares the user's IME backend and broke conversion in practice.
+- Super-based shortcuts cannot be tested in the devkit window: the logged-in
+  GNOME Shell handles them before the nested Shell sees them.
 
 See `docs/dbus.md` for the wire protocol.

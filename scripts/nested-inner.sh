@@ -8,6 +8,18 @@ display=liwin-nested-0
 # Safety net: never touch the real user's dconf database.
 [[ "$XDG_CONFIG_HOME" == "$sb/config" ]] || { echo "refusing: XDG_CONFIG_HOME is not sandboxed" >&2; exit 1; }
 
+# No input method in the nested Shell. GNOME Shell spawns ibus-daemon from
+# PATH (js/misc/ibusManager.js); a nested IBus shares the user's IME backend
+# (e.g. mozc_server) and was seen to break conversion. Shadow it with a no-op
+# and make sure nothing connects to the logged-in session's IBus.
+mkdir -p "$sb/bin"
+printf '#!/bin/sh\nexit 0\n' >"$sb/bin/ibus-daemon"
+chmod +x "$sb/bin/ibus-daemon"
+export PATH="$sb/bin:$PATH"
+unset IBUS_ADDRESS
+rm -rf "$XDG_CONFIG_HOME/ibus"
+gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us')]"
+
 gsettings set org.gnome.shell enabled-extensions "['liwin@kura']"
 # A previous run may have disabled it (disabled-extensions wins over enabled).
 gsettings set org.gnome.shell disabled-extensions "[]"

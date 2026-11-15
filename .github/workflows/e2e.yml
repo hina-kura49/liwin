@@ -102,6 +102,28 @@ jobs:
           dbus-daemon --system --fork
           test -S /run/dbus/system_bus_socket
 
+      - name: Disable animations (experiment)
+        if: matrix.variant == 'pr2'
+        run: |
+          printf '[org.gnome.desktop.interface]\nenable-animations=false\n' \
+            >/usr/share/glib-2.0/schemas/99-liwin-e2e.gschema.override
+          glib-compile-schemas /usr/share/glib-2.0/schemas
+
+      - name: Diagnostics watcher (temporary)
+        run: |
+          cat >/tmp/diag.sh <<'EOF'
+          cd "$1"
+          while ! [ -f .sandbox/env ]; do sleep 0.2; done
+          . .sandbox/env
+          for i in $(seq 90); do
+            date +%T.%N; target/debug/liwin list-windows
+            busctl --user call org.gnome.Shell /org/gnome/Shell org.freedesktop.DBus.Properties Get ss org.gnome.Shell OverviewActive
+            sleep 0.5
+          done
+          EOF
+          runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
+            bash /tmp/diag.sh "$GITHUB_WORKSPACE" >/tmp/diag.out 2>&1 &
+
       - name: End-to-end test (just e2e)
         run: |
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
@@ -121,3 +143,4 @@ jobs:
           path: |
             .sandbox/*.log
             .sandbox/*.out
+            /tmp/diag.out

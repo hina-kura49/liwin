@@ -1,0 +1,259 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Builds the release assets:
+#   liwin-<version>-<target>.tar.gz  (liwin, liwin-daemon, README, licenses)
+#   liwin@kura.shell-extension.zip   (layout of `gnome-extensions pack`)
+#   SHA256SUMS
+# and, when given a tag, attests their build provenance and uploads them to
+# that GitHub release.
+#
+# - workflow_call: from release-please.yml right after it created a release.
+# - workflow_dispatch: re-run for an existing release tag by hand.
+# - pull_request: dry run (build + package, no attestation, no upload).
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z) to build and upload to
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (vX.Y.Z) to build and upload to
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-please.yml
+      - release-please-config.json
+      - .release-please-manifest.json
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - extension/**
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Empty on pull_request: dry run.
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      # All version fields bumped by release-please must agree (and match the
+      # tag when there is one).
+      - name: Check versions
+        id: version
+        shell: python3 {0}
+        run: |
+          import json, os, sys, tomllib
+
+          with open("Cargo.toml", "rb") as f:
+              version = tomllib.load(f)["workspace"]["package"]["version"]
+          with open("Cargo.lock", "rb") as f:
+              lock = {p["name"]: p["version"] for p in tomllib.load(f)["package"]}
+          with open("extension/package.json") as f:
+              npm = json.load(f)["version"]
+          with open("extension/package-lock.json") as f:
+              npm_lock = json.load(f)
+          with open("extension/metadata.json") as f:
+              meta = json.load(f)
+
+          found = {
+              "Cargo.toml [workspace.package] version": version,
+              "Cargo.lock liwin-core": lock.get("liwin-core"),
+              "Cargo.lock liwin-daemon": lock.get("liwin-daemon"),
+              "Cargo.lock liwin-cli": lock.get("liwin-cli"),
+              "extension/package.json version": npm,
+              "extension/package-lock.json version": npm_lock["version"],
+              "extension/package-lock.json packages[''] version": npm_lock["packages"][""]["version"],
+              "extension/metadata.json version-name": meta["version-name"],
+          }
+          tag = os.environ["RELEASE_TAG"]
+          if tag:
+              found["release tag"] = tag.removeprefix("v")
+          for name, value in found.items():
+              print(f"{name}: {value}")
+          if any(value != version for value in found.values()):
+              sys.exit(f"::error::version mismatch, expected {version} everywhere")
+          if meta["uuid"] != "liwin@kura":
+              sys.exit(f"::error::unexpected extension uuid {meta['uuid']}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"version={version}", file=f)
+
+  binaries:
+    name: Binaries (${{ matrix.target }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target "$TARGET" --bin liwin --bin liwin-daemon
+
+      - name: Smoke test
+        run: |
+          bin="target/$TARGET/release"
+          "$bin/liwin" --version | tee /dev/stderr | grep -qxF "liwin $VERSION"
+          "$bin/liwin-daemon" --version | tee /dev/stderr | grep -qxF "liwin-daemon $VERSION"
+
+      - name: Package
+        run: |
+          name="liwin-$VERSION-$TARGET"
+          stage="target/dist-stage/$name"
+          rm -rf target/dist-stage target/dist
+          mkdir -p "$stage" target/dist
+          install -m 755 "target/$TARGET/release/liwin" "target/$TARGET/release/liwin-daemon" "$stage/"
+          install -m 644 README.md LICENSE-MIT LICENSE-APACHE "$stage/"
+          epoch=$(git log -1 --format=%ct)
+          tar -C target/dist-stage --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@$epoch" -cf - "$name" | gzip -9n >"target/dist/$name.tar.gz"
+          tar -tvzf "target/dist/$name.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.target }}
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  extension:
+    name: Extension zip
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Compile
+        working-directory: extension
+        run: |
+          npm ci --ignore-scripts
+          npx tsc
+
+      # `gnome-extensions pack` puts metadata.json and the sources at the root
+      # of the zip (no top-level directory); do the same with what
+      # `just ext-build` installs: metadata.json + the compiled JS.
+      - name: Package
+        run: |
+          zip="liwin@kura.shell-extension.zip"
+          stage="target/ext-stage"
+          rm -rf "$stage" target/dist
+          mkdir -p "$stage" target/dist
+          cp extension/metadata.json extension/dist/*.js "$stage/"
+          test -f "$stage/extension.js"
+          epoch=$(git log -1 --format=%ct)
+          find "$stage" -type f -exec touch -d "@$epoch" {} +
+          (cd "$stage" && find . -type f -printf '%P\n' | LC_ALL=C sort | zip -X -9 "../dist/$zip" -@)
+          unzip -l "target/dist/$zip"
+          unzip -p "target/dist/$zip" metadata.json | python3 -c '
+          import json, os, sys
+          meta = json.load(sys.stdin)
+          assert meta["uuid"] == "liwin@kura", meta
+          assert meta["version-name"] == os.environ["VERSION"], meta
+          '
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-extension
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  checksums:
+    name: Checksums
+    needs: [binaries, extension]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum -- *.tar.gz *.zip >SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+          test "$(wc -l <SHA256SUMS)" -eq 3
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Attest and upload
+    needs: checksums
+    if: inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber

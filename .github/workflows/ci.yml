@@ -131,11 +131,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: actionlint,shellcheck
+      # Official installer, pinned to a release. actionlint also runs
+      # shellcheck (preinstalled on the runner) on `run:` scripts.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
       - name: actionlint
-        run: actionlint -color
+        run: ./actionlint -color
 
   typos:
     name: Lint (typos)

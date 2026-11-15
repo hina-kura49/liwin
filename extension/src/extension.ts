@@ -7,13 +7,16 @@
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {DaemonClient} from './daemon.js';
+import {KeybindingManager} from './keybindings.js';
 import {WindowTracker} from './windows.js';
 
 class Liwin {
     private readonly _daemon: DaemonClient;
     private readonly _windows: WindowTracker;
+    private readonly _keys: KeybindingManager;
 
     constructor() {
+        this._keys = new KeybindingManager(id => this._daemon.keybindingTriggered(id));
         this._windows = new WindowTracker({
             windowOpened: w => this._daemon.windowOpened(w),
             windowClosed: id => this._daemon.windowClosed(id),
@@ -23,7 +26,8 @@ class Liwin {
         this._daemon = new DaemonClient({
             onConnected: () => this._sendSnapshot(),
             onResyncRequested: () => this._sendSnapshot(),
-            onDisconnected: () => {},
+            // Do not keep keys grabbed on behalf of a daemon that is gone.
+            onDisconnected: () => this._keys.clear(),
             onMoveResizeWindow: (req, id, x, y, w, h) => {
                 const err = this._windows.moveResize(id, x, y, w, h);
                 this._daemon.requestCompleted(req, err === null, err ?? '');
@@ -32,15 +36,17 @@ class Liwin {
                 const err = this._windows.focus(id);
                 this._daemon.requestCompleted(req, err === null, err ?? '');
             },
-            // Keybindings are not implemented yet: report all as rejected.
             onKeybindingsChanged: bindings => {
-                this._daemon.keybindingsApplied(bindings.map(([id]) => id));
+                const rejected = this._keys.set(bindings);
+                console.log(`liwin: ${bindings.length - rejected.length}/${bindings.length} keybindings grabbed`);
+                this._daemon.keybindingsApplied(rejected);
             },
         });
     }
 
     destroy(): void {
         this._daemon.destroy();
+        this._keys.destroy();
         this._windows.destroy();
     }
 

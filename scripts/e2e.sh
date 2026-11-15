@@ -7,8 +7,16 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 sb="$root/.sandbox"
 liwin="$root/target/debug/liwin"
 
-mkdir -p "$sb"
+mkdir -p "$sb/config/liwin"
 rm -f "$sb/env"
+cat >"$sb/config/liwin/liwin.toml" <<'TOML'
+config-version = 2
+[mode.main.binding]
+alt-h = 'focus left'
+alt-l = 'focus right'
+# Super+A is GNOME Shell's "show apps": must be rejected, not stolen.
+cmd-a = 'focus up'
+TOML
 "$root/scripts/nested.sh" headless >"$sb/e2e-shell.out" 2>&1 &
 nested_pid=$!
 cleanup() {
@@ -55,6 +63,11 @@ moved() {
 }
 wait_for 10 "the window geometry to update" moved
 "$liwin" list-windows
+
+# Keybindings were sent to the extension, grabbed, and acknowledged.
+applied() { sed 's/\x1b\[[0-9;]*m//g' "$sb/daemon.log" | grep -q 'KeybindingsApplied grabbed=2 rejected=\[2\]'; }
+wait_for 5 "keybindings to be applied" applied
+echo "e2e: alt-h/alt-l grabbed, cmd-a (GNOME show-apps) rejected"
 
 # disable() must say Goodbye and release everything without errors.
 gnome-extensions disable liwin@kura

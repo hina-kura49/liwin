@@ -8,9 +8,10 @@ use zbus::names::{BusName, OwnedUniqueName};
 use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
 
+use crate::commands;
 use crate::model::{WireMonitor, WireWindow};
 use crate::service::Shared;
-use crate::{LiwinError, PROTOCOL_VERSION, SHELL_IDENTITY_NAME};
+use crate::{LiwinError, OBJECT_PATH, PROTOCOL_VERSION, SHELL_IDENTITY_NAME};
 
 pub struct ShellBridge {
     shared: Arc<Shared>,
@@ -109,13 +110,32 @@ impl ShellBridge {
         focused: u64,
         windows: Vec<WireWindow>,
         #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
-        self.authorize(&hdr)?;
+        let peer = self.authorize(&hdr)?;
         tracing::info!(count = windows.len(), "SyncWindows");
-        self.shared
-            .state()
-            .model
-            .sync_windows(opt_window(focused), windows.into_iter().map(Into::into));
+        let send_keybindings = {
+            let mut st = self.shared.state();
+            st.model
+                .sync_windows(opt_window(focused), windows.into_iter().map(Into::into));
+            !std::mem::replace(&mut st.keybindings_sent, true)
+        };
+        // The first snapshot after Hello proves the extension is ready to
+        // receive signals: send it the keybinding table (unicast).
+        if send_keybindings {
+            let table: Vec<(u32, String)> = self
+                .shared
+                .options
+                .keybindings
+                .iter()
+                .enumerate()
+                .map(|(i, b)| (i as u32, b.accelerator.clone()))
+                .collect();
+            SignalEmitter::new(conn, OBJECT_PATH)?
+                .set_destination(BusName::Unique(peer.into()))
+                .keybindings_changed(table)
+                .await?;
+        }
         Ok(())
     }
 
@@ -156,12 +176,31 @@ impl ShellBridge {
         &self,
         binding_id: u32,
         #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
-        tracing::debug!(
-            binding_id,
-            "KeybindingTriggered (keybindings not configured yet)"
-        );
+        let Some(binding) = self.shared.options.keybindings.get(binding_id as usize) else {
+            tracing::warn!(binding_id, "unknown keybinding id");
+            return Ok(());
+        };
+        tracing::debug!(key = %binding.key, "keybinding triggered");
+        // Reply right away; the commands may wait for the extension, which
+        // must not be blocked on this call.
+        let shared = self.shared.clone();
+        let conn = conn.clone();
+        let binding = binding.clone();
+        tokio::spawn(async move {
+            for args in &binding.commands {
+                let result = match commands::parse(args) {
+                    Ok(command) => shared.run(&conn, command).await,
+                    Err(e) => Err(LiwinError::InvalidCommand(e)),
+                };
+                if let Err(e) = result {
+                    tracing::warn!(key = %binding.key, command = %args.join(" "), "keybinding command failed: {e:?}");
+                    break;
+                }
+            }
+        });
         Ok(())
     }
 
@@ -171,7 +210,21 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
-        tracing::info!(?rejected, "KeybindingsApplied");
+        let total = self.shared.options.keybindings.len();
+        for &id in &rejected {
+            if let Some(b) = self.shared.options.keybindings.get(id as usize) {
+                tracing::warn!(
+                    key = %b.key,
+                    accelerator = %b.accelerator,
+                    "keybinding rejected by GNOME Shell (already in use); not stealing it"
+                );
+            }
+        }
+        tracing::info!(
+            grabbed = total.saturating_sub(rejected.len()),
+            ?rejected,
+            "KeybindingsApplied"
+        );
         Ok(())
     }
 

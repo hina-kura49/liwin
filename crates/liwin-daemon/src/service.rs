@@ -24,6 +24,8 @@ pub struct State {
     /// Unique bus name of the authenticated GNOME Shell, once it said `Hello`.
     pub shell_peer: Option<OwnedUniqueName>,
     pub model: Model,
+    /// Whether the keybinding table was sent to the current Shell peer.
+    pub keybindings_sent: bool,
     next_request_id: u32,
     pending: HashMap<u32, oneshot::Sender<RequestResult>>,
 }
@@ -32,6 +34,7 @@ impl State {
     /// Forgets the current Shell and fails all of its pending requests.
     pub fn disconnect_shell(&mut self) {
         self.shell_peer = None;
+        self.keybindings_sent = false;
         self.model.clear();
         for (_, tx) in self.pending.drain() {
             let _ = tx.send(Err("shell disconnected".into()));
@@ -58,6 +61,7 @@ impl Shared {
             options,
             state: Mutex::new(State {
                 shell_peer: None,
+                keybindings_sent: false,
                 model: Model::new(Orientation::Horizontal),
                 next_request_id: 1,
                 pending: HashMap::new(),

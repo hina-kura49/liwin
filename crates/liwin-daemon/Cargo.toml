@@ -17,6 +17,9 @@ zbus = { version = "6.3", default-features = false, features = ["tokio", "proxy"
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "process", "io-util"] }
 futures-util = "0.3"
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_ignored = "0.1.14"
+toml = "1.2"
 clap = { version = "4.6", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -6,6 +6,7 @@
 
 pub mod bridge;
 pub mod commands;
+pub mod config;
 pub mod error;
 pub mod model;
 pub mod service;
@@ -35,6 +36,8 @@ pub struct Options {
     pub enable_debug_commands: bool,
     /// How long to wait for the extension to acknowledge a command.
     pub request_timeout: Duration,
+    /// Keybindings of the `main` mode, sent to the extension.
+    pub keybindings: Vec<config::KeyBinding>,
 }
 
 impl Default for Options {
@@ -42,6 +45,7 @@ impl Default for Options {
         Self {
             enable_debug_commands: false,
             request_timeout: Duration::from_secs(2),
+            keybindings: Vec::new(),
         }
     }
 }

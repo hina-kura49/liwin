@@ -68,6 +68,7 @@ fn debug_options() -> Options {
     Options {
         enable_debug_commands: true,
         request_timeout: Duration::from_millis(500),
+        ..Options::default()
     }
 }
 
@@ -332,4 +333,63 @@ async fn shell_disconnect_resets_state() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let err = run(&cli, &["focus", "left"]).await.unwrap_err();
     assert_eq!(error_name(&err), "io.github.liwin.Error.ShellNotConnected");
+}
+
+#[tokio::test]
+async fn keybindings_are_sent_after_sync_and_trigger_commands() {
+    let bus = Bus::start().await;
+    let text = "[mode.main.binding]\nalt-h = 'focus left'\nalt-l = 'focus right'\n";
+    let loaded = liwin_daemon::config::parse(text).unwrap();
+    let options = Options {
+        keybindings: loaded.config.main_bindings(&mut Vec::new()),
+        ..Options::default()
+    };
+    let _daemon = bus.daemon(options).await;
+    let shell = bus.shell().await;
+    let mut tables = bridge_signals(&shell, "KeybindingsChanged").await;
+    let mut focus = bridge_signals(&shell, "FocusWindow").await;
+
+    hello_and_sync(&shell).await;
+    let msg = tables.next().await.unwrap().unwrap();
+    let (table,): (Vec<(u32, String)>,) = msg.body().deserialize().unwrap();
+    assert_eq!(
+        table,
+        vec![(0, "<Alt>h".to_owned()), (1, "<Alt>l".to_owned())]
+    );
+    let () = call(
+        &shell,
+        BRIDGE_INTERFACE,
+        "KeybindingsApplied",
+        &(vec![1u32],),
+    )
+    .await
+    .unwrap();
+
+    // alt-h → focus left → FocusWindow(11)
+    let () = call(&shell, BRIDGE_INTERFACE, "KeybindingTriggered", &(0u32,))
+        .await
+        .unwrap();
+    let msg = tokio::time::timeout(Duration::from_secs(2), focus.next())
+        .await
+        .expect("FocusWindow after keybinding")
+        .unwrap()
+        .unwrap();
+    let (req, id): (u32, u64) = msg.body().deserialize().unwrap();
+    assert_eq!(id, 11);
+    let () = call(
+        &shell,
+        BRIDGE_INTERFACE,
+        "RequestCompleted",
+        &(req, true, ""),
+    )
+    .await
+    .unwrap();
+
+    // A second snapshot does not re-send the table.
+    hello_and_sync(&shell).await;
+    let again = tokio::time::timeout(Duration::from_millis(200), tables.next()).await;
+    assert!(
+        again.is_err(),
+        "keybinding table must be sent once per Hello"
+    );
 }

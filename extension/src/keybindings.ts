@@ -5,15 +5,17 @@
 // schema, so bindings can come from the user's TOML file.
 //
 // Conflicts: we never steal a key. A binding is skipped and reported as
-// rejected when (a) GNOME's keybinding settings already use the accelerator
-// (see accelerators.ts — grab_accelerator() alone was observed not to catch
-// this), or (b) grab_accelerator() returns Meta.KeyBindingAction.NONE.
+// rejected when (a) GNOME's keybinding settings, a gnome-settings-daemon
+// custom shortcut or an active shortcut-using extension already use the
+// accelerator (see accelerators.ts — grab_accelerator() alone was observed
+// not to catch this), or (b) grab_accelerator() returns
+// Meta.KeyBindingAction.NONE.
 
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {gnomeBoundAccelerators} from './accelerators.js';
+import {boundAccelerators} from './accelerators.js';
 import {planBindings} from './bindingPlan.js';
 
 export class KeybindingManager {
@@ -34,10 +36,10 @@ export class KeybindingManager {
     /** Replaces all bindings. Returns the binding ids that could not be grabbed. */
     set(bindings: [number, string][]): number[] {
         this.clear();
-        const plan = planBindings(bindings, gnomeBoundAccelerators());
+        const plan = planBindings(bindings, boundAccelerators());
         const rejected: number[] = [];
         for (const {bindingId, accelerator, owner} of plan.conflicts) {
-            console.warn(`liwin: ${accelerator} is used by GNOME (${owner}), skipping`);
+            console.warn(`liwin: ${accelerator} is already used (${owner}), skipping`);
             rejected.push(bindingId);
         }
         for (const [bindingId, accelerator] of plan.grab) {

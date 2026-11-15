@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# End-to-end test: a headless nested GNOME Shell 50 with the extension and
+# the daemon (`just e2e` -> scripts/e2e.sh), in an Ubuntu 26.04 container so
+# that the Shell is the version the extension targets.
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  DEBIAN_FRONTEND: noninteractive
+  LANG: C.UTF-8
+  # The test runs as an unprivileged user (a Wayland session as root is not
+  # what the scripts are written for); its toolchain lives in its home.
+  E2E_USER: e2e
+  E2E_HOME: /home/e2e
+  CARGO_HOME: /home/e2e/.cargo
+  RUSTUP_HOME: /home/e2e/.rustup
+
+jobs:
+  e2e:
+    name: E2E (GNOME Shell 50, headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ubuntu:26.04
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config just \
+            gnome-shell gnome-text-editor \
+            dbus dbus-daemon dbus-user-session libglib2.0-bin \
+            gsettings-desktop-schemas \
+            libgl1-mesa-dri libegl-mesa0 libgles2 mesa-vulkan-drivers \
+            systemd procps util-linux fuse3 \
+            fonts-dejavu-core adwaita-icon-theme at-spi2-core
+          gnome-shell --version
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Create the test user
+        run: |
+          useradd --create-home --home-dir "$E2E_HOME" --shell /bin/bash "$E2E_USER"
+          uid=$(id -u "$E2E_USER")
+          install -d -m 700 -o "$E2E_USER" -g "$E2E_USER" "/run/user/$uid"
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >>"$GITHUB_ENV"
+
+      - name: Install Rust (stable) for the test user
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          chown -R "$E2E_USER:" "$GITHUB_WORKSPACE"
+          runuser -u "$E2E_USER" -- env HOME="$E2E_HOME" CARGO_HOME="$CARGO_HOME" \
+            RUSTUP_HOME="$RUSTUP_HOME" sh /tmp/rustup.sh -y --profile minimal \
+            --default-toolchain stable --no-modify-path
+          echo "$CARGO_HOME/bin" >>"$GITHUB_PATH"
+
+      - name: Build (just build)
+        run: |
+          runuser -u "$E2E_USER" -- env HOME="$E2E_HOME" PATH="$PATH" \
+            CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
+            CARGO_TERM_COLOR=always just build
+
+      # GNOME Shell connects to the system bus at startup (login manager,
+      # time limits) and aborts without one; the container has no init.
+      # There is no systemd-logind either: hide it, so that the Shell uses
+      # its dummy login manager instead of D-Bus-activating logind (which
+      # fails and aborts the Shell).
+      - name: Start a system bus
+        run: |
+          rm -rf /run/systemd
+          rm -f /usr/share/dbus-1/system-services/org.freedesktop.login1.service
+          mkdir -p /run/dbus
+          dbus-daemon --system --fork
+          test -S /run/dbus/system_bus_socket
+
+      # GNOME Shell starts in the overview, and while the overview is shown
+      # new windows do not get the focus, so `move left` has nothing to move
+      # (seen on the hosted runners, not locally). Keep the overview hidden
+      # while the test runs. The helper sources .sandbox/env, so
+      # scripts/nested.sh reaps it at the end along with the sandbox.
+      - name: End-to-end test (just e2e)
+        run: |
+          cat >/tmp/hide-overview.sh <<'EOF'
+          # Logs every change of overview/focus state to .sandbox/overview.out.
+          cd "$1"
+          prop="org.gnome.Shell /org/gnome/Shell org.gnome.Shell OverviewActive"
+          last=
+          while :; do
+            # Re-read the env file every time: it may be half-written, or
+            # replaced by a new run.
+            if grep -q XDG_CACHE_HOME .sandbox/env 2>/dev/null; then
+              . ./.sandbox/env
+              st=$(busctl --user get-property $prop 2>&1)
+              if [ "$st" = "b true" ]; then
+                busctl --user set-property $prop b false 2>&1
+                st="b true -> hidden ($?)"
+              fi
+              f=$(target/debug/liwin list-windows 2>/dev/null | awk '$1=="*"{print $2}')
+              st="$st, focus: ${f:-none}"
+              [ "$st" = "$last" ] || echo "$(date +%T.%N) overview: $st" >>.sandbox/overview.out
+              last=$st
+            fi
+            sleep 0.1
+          done
+          EOF
+          runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
+            timeout 900 bash /tmp/hide-overview.sh "$GITHUB_WORKSPACE" &
+          helper=$!
+          status=0
+          runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
+            USER="$E2E_USER" LOGNAME="$E2E_USER" LANG="$LANG" \
+            CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
+            XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            just e2e || status=$?
+          kill "$helper" 2>/dev/null || true
+          exit "$status"
+
+      - name: Upload sandbox logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          include-hidden-files: true
+          if-no-files-found: ignore
+          path: |
+            .sandbox/*.log
+            .sandbox/*.out

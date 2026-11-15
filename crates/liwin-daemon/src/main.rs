@@ -27,7 +27,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("LIWIN_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                // zbus spans would otherwise prefix every line with the full
+                // D-Bus message being dispatched.
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,zbus=warn")),
         )
         .init();
     let args = Args::parse();

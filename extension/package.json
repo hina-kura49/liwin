@@ -1,0 +1,16 @@
+{
+  "name": "liwin-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Thin GNOME Shell extension for liwin",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@girs/gjs": "5.6.0",
+    "@girs/gnome-shell": "50.0.4",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "uuid": "liwin@kura",
+  "name": "liwin",
+  "description": "Thin compositor-side layer for the liwin tiling daemon: reports windows, executes move/focus commands and grabs keybindings.",
+  "shell-version": ["50"],
+  "version-name": "0.1.0"
+}

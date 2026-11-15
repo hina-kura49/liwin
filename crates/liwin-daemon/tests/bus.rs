@@ -1,0 +1,335 @@
+//! Integration tests against a private `dbus-daemon`.
+//!
+//! A mock "GNOME Shell" connection owns `org.gnome.Shell.Introspect`, exactly
+//! like the real Shell does, and plays the extension's role.
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use futures_util::StreamExt;
+use liwin_daemon::{
+    BRIDGE_INTERFACE, BUS_NAME, DAEMON_INTERFACE, OBJECT_PATH, Options, SHELL_IDENTITY_NAME,
+    service,
+};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use zbus::message::Type;
+use zbus::{Connection, MatchRule, MessageStream};
+
+struct Bus {
+    _child: Child,
+    address: String,
+}
+
+impl Bus {
+    async fn start() -> Bus {
+        let mut child = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("dbus-daemon must be installed to run these tests");
+        let stdout = child.stdout.take().unwrap();
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line).await.unwrap();
+        Bus {
+            _child: child,
+            address: line.trim().to_owned(),
+        }
+    }
+
+    async fn connect(&self) -> Connection {
+        zbus::connection::Builder::address(self.address.as_str())
+            .build()
+            .await
+            .unwrap()
+    }
+
+    async fn daemon(&self, options: Options) -> Connection {
+        service::serve(
+            zbus::connection::Builder::address(self.address.as_str()),
+            options,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A connection posing as GNOME Shell.
+    async fn shell(&self) -> Connection {
+        zbus::connection::Builder::address(self.address.as_str())
+            .name(SHELL_IDENTITY_NAME)
+            .build()
+            .await
+            .unwrap()
+    }
+}
+
+fn debug_options() -> Options {
+    Options {
+        enable_debug_commands: true,
+        request_timeout: Duration::from_millis(500),
+    }
+}
+
+async fn call<B, R>(conn: &Connection, iface: &str, method: &str, body: &B) -> zbus::Result<R>
+where
+    B: serde::Serialize + zbus::zvariant::DynamicType,
+    R: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,
+{
+    let reply = conn
+        .call_method(Some(BUS_NAME), OBJECT_PATH, Some(iface), method, body)
+        .await?;
+    reply.body().deserialize::<R>()
+}
+
+async fn run(conn: &Connection, args: &[&str]) -> zbus::Result<String> {
+    call(conn, DAEMON_INTERFACE, "RunCommand", &(args,)).await
+}
+
+fn error_name(e: &zbus::Error) -> String {
+    match e {
+        zbus::Error::MethodError(name, _, _) => name.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+async fn hello_and_sync(shell: &Connection) {
+    let v: u32 = call(shell, BRIDGE_INTERFACE, "Hello", &(1u32,))
+        .await
+        .unwrap();
+    assert_eq!(v, 1);
+    let monitors: Vec<(i32, i32, i32, i32, i32)> = vec![(0, 0, 32, 1920, 1048)];
+    let () = call(shell, BRIDGE_INTERFACE, "SyncMonitors", &(monitors,))
+        .await
+        .unwrap();
+    let windows: Vec<(u64, u32, i32, i32, i32, i32, i32)> =
+        vec![(11, 0, 0, 0, 32, 960, 1048), (22, 0, 0, 960, 32, 960, 1048)];
+    let () = call(shell, BRIDGE_INTERFACE, "SyncWindows", &(22u64, windows))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn daemon_owns_its_bus_name() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let client = bus.connect().await;
+    let dbus = zbus::fdo::DBusProxy::new(&client).await.unwrap();
+    assert!(
+        dbus.name_has_owner(BUS_NAME.try_into().unwrap())
+            .await
+            .unwrap()
+    );
+
+    let version: zbus::OwnedVariant = call(
+        &client,
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        &(DAEMON_INTERFACE, "Version"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        String::try_from(version).unwrap(),
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[tokio::test]
+async fn second_daemon_fails_to_start() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let second = service::serve(
+        zbus::connection::Builder::address(bus.address.as_str()),
+        Options::default(),
+    )
+    .await;
+    assert!(second.is_err());
+}
+
+#[tokio::test]
+async fn bridge_rejects_non_shell_callers() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let _shell = bus.shell().await;
+    let intruder = bus.connect().await;
+
+    let err = call::<_, u32>(&intruder, BRIDGE_INTERFACE, "Hello", &(1u32,))
+        .await
+        .unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.AccessDenied");
+
+    let err = call::<_, ()>(&intruder, BRIDGE_INTERFACE, "WindowClosed", &(1u64,))
+        .await
+        .unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.AccessDenied");
+}
+
+#[tokio::test]
+async fn bridge_requires_hello_first() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let err = call::<_, ()>(&shell, BRIDGE_INTERFACE, "WindowClosed", &(1u64,))
+        .await
+        .unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.AccessDenied");
+}
+
+#[tokio::test]
+async fn synced_windows_are_listed() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+
+    let err = run(&cli, &["focus", "left"]).await.unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.ShellNotConnected");
+
+    hello_and_sync(&shell).await;
+    let out = run(&cli, &["list-windows"]).await.unwrap();
+    assert!(out.contains("11"), "{out}");
+    assert!(out.contains("* 22"), "{out}");
+}
+
+#[tokio::test]
+async fn debug_commands_are_off_by_default() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let cli = bus.connect().await;
+    let err = run(&cli, &["debug", "move-window", "1", "0", "0", "10", "10"])
+        .await
+        .unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.InvalidCommand");
+}
+
+async fn bridge_signals(conn: &Connection, member: &'static str) -> MessageStream {
+    let rule = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .sender(BUS_NAME)
+        .interface(BRIDGE_INTERFACE)
+        .member(member)
+        .build()
+        .unwrap();
+    MessageStream::for_match_rule(rule, conn, None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn move_window_round_trip_is_unicast_to_shell() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(debug_options()).await;
+    let shell = bus.shell().await;
+    let eavesdropper = bus.connect().await;
+    let cli = bus.connect().await;
+    hello_and_sync(&shell).await;
+
+    let mut shell_signals = bridge_signals(&shell, "MoveResizeWindow").await;
+    let mut other_signals = bridge_signals(&eavesdropper, "MoveResizeWindow").await;
+
+    let shell_side = {
+        let shell = shell.clone();
+        tokio::spawn(async move {
+            let msg = shell_signals.next().await.unwrap().unwrap();
+            let (req, id, x, y, w, h): (u32, u64, i32, i32, i32, i32) =
+                msg.body().deserialize().unwrap();
+            assert_eq!((id, x, y, w, h), (11, 100, 120, 800, 600));
+            let () = call(
+                &shell,
+                BRIDGE_INTERFACE,
+                "RequestCompleted",
+                &(req, true, ""),
+            )
+            .await
+            .unwrap();
+        })
+    };
+
+    let out = run(
+        &cli,
+        &["debug", "move-window", "11", "100", "120", "800", "600"],
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, "ok");
+    shell_side.await.unwrap();
+
+    let leaked = tokio::time::timeout(Duration::from_millis(200), other_signals.next()).await;
+    assert!(leaked.is_err(), "command signal must not reach other peers");
+}
+
+#[tokio::test]
+async fn unanswered_request_times_out() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(debug_options()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    hello_and_sync(&shell).await;
+
+    let err = run(&cli, &["debug", "move-window", "11", "0", "0", "10", "10"])
+        .await
+        .unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.Timeout");
+}
+
+#[tokio::test]
+async fn focus_left_asks_shell_to_focus_neighbour() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    hello_and_sync(&shell).await;
+
+    let mut signals = bridge_signals(&shell, "FocusWindow").await;
+    let shell_side = {
+        let shell = shell.clone();
+        tokio::spawn(async move {
+            let msg = signals.next().await.unwrap().unwrap();
+            let (req, id): (u32, u64) = msg.body().deserialize().unwrap();
+            assert_eq!(id, 11);
+            let () = call(
+                &shell,
+                BRIDGE_INTERFACE,
+                "RequestCompleted",
+                &(req, true, ""),
+            )
+            .await
+            .unwrap();
+        })
+    };
+    run(&cli, &["focus", "left"]).await.unwrap();
+    shell_side.await.unwrap();
+}
+
+#[tokio::test]
+async fn goodbye_resets_state() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let shell = bus.shell().await;
+    let cli = bus.connect().await;
+    hello_and_sync(&shell).await;
+    let () = call(&shell, BRIDGE_INTERFACE, "Goodbye", &())
+        .await
+        .unwrap();
+    let err = run(&cli, &["focus", "left"]).await.unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.ShellNotConnected");
+    // A new Hello reconnects.
+    hello_and_sync(&shell).await;
+    assert!(run(&cli, &["list-windows"]).await.unwrap().contains("22"));
+}
+
+#[tokio::test]
+async fn shell_disconnect_resets_state() {
+    let bus = Bus::start().await;
+    let _daemon = bus.daemon(Options::default()).await;
+    let cli = bus.connect().await;
+    {
+        let shell = bus.shell().await;
+        hello_and_sync(&shell).await;
+        shell.close().await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let err = run(&cli, &["focus", "left"]).await.unwrap_err();
+    assert_eq!(error_name(&err), "io.github.liwin.Error.ShellNotConnected");
+}

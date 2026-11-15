@@ -1,0 +1,6 @@
+/target
+/.sandbox
+/extension/node_modules
+/extension/dist
+*.zip
+/extension/build

@@ -25,6 +25,10 @@ daemon="$root/target/debug/liwin-daemon"
 [[ -x "$daemon" ]] || { echo "daemon not built: run 'just build'" >&2; exit 1; }
 case "$mode" in devkit|headless) ;; *) echo "unknown mode '$mode'" >&2; exit 2 ;; esac
 
+# Start every run from GNOME defaults: settings written by an earlier run
+# (e.g. a rebound shortcut, or disabled-extensions after a test that disabled
+# liwin) would otherwise change what this run tests.
+rm -rf "$sb/config/dconf"
 mkdir -p "$sb/config" "$sb/data/gnome-shell/extensions" "$sb/cache"
 rm -rf "$sb/data/gnome-shell/extensions/liwin@kura"
 cp -r "$ext_src" "$sb/data/gnome-shell/extensions/"
@@ -36,14 +40,16 @@ export XDG_CONFIG_HOME="$sb/config" XDG_DATA_HOME="$sb/data" XDG_CACHE_HOME="$sb
 # nested one had it there, the user's extensions would be disabled. The
 # headless Shell needs nothing from the real runtime dir, so give it its own.
 # The devkit window must talk to the real compositor and keeps the real one.
+#
+# The private dir is a short-named subdirectory of the user's runtime dir, not
+# a path inside the checkout: Wayland socket paths must fit in 108 bytes, which
+# a deep checkout path exceeds. The sentinel then lands in the subdirectory,
+# where the logged-in session never looks.
+run_dir=""
 if [[ "$mode" == headless ]]; then
-    # Leftover FUSE mounts from an interrupted run would block the cleanup.
-    for mnt in $(findmnt -rn -o TARGET | grep -F "$sb/run/" || true); do
-        fusermount3 -u -z "$mnt" 2>/dev/null || true
-    done
-    rm -rf "$sb/run"
-    mkdir -m 700 "$sb/run"
-    export XDG_RUNTIME_DIR="$sb/run"
+    run_dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/liwin-nested.XXXXXX")
+    chmod 700 "$run_dir"
+    export XDG_RUNTIME_DIR="$run_dir"
 fi
 export LIWIN_SANDBOX="$sb" LIWIN_MODE="$mode" LIWIN_DAEMON="$daemon"
 # D-Bus-activated helpers (e.g. gnome-shell-calendar-server) can outlive the
@@ -58,12 +64,20 @@ reap_sandbox() {
     done
 }
 # Helpers of the nested session (gvfsd-fuse, xdg-document-portal) mount FUSE
-# filesystems in a private runtime dir; unmount them once they are gone.
+# filesystems in the private runtime dir; unmount them once they are gone,
+# then remove the dir.
 unmount_sandbox() {
+    [[ -n "$run_dir" ]] || return 0
     local mnt
-    for mnt in $(findmnt -rn -o TARGET | grep -F "$sb/run/" || true); do
+    for mnt in $(findmnt -rn -o TARGET | grep -F "$run_dir/" || true); do
         fusermount3 -u -z "$mnt" 2>/dev/null || fusermount -u -z "$mnt" 2>/dev/null || true
     done
+    # Never delete through a mount: the document portal exposes real files.
+    if findmnt -rn -o TARGET | grep -qF "$run_dir/"; then
+        echo "nested.sh: $run_dir still has mounts; not removing it" >&2
+        return 0
+    fi
+    rm -rf --one-file-system "$run_dir"
 }
 trap 'reap_sandbox; sleep 0.5; unmount_sandbox' EXIT
 dbus-run-session -- "$root/scripts/nested-inner.sh"

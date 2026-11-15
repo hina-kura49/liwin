@@ -8,7 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, test/core-properties-and-ci]
+    branches: [main]
 
 permissions:
   contents: read
@@ -35,10 +35,6 @@ jobs:
     timeout-minutes: 30
     container:
       image: ubuntu:26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [current, pr2]
     steps:
       - name: Install packages
         run: |
@@ -54,13 +50,6 @@ jobs:
           gnome-shell --version
 
       - uses: actions/checkout@v4
-
-      - name: Use PR 2 nested.sh (temporary)
-        if: matrix.variant == 'pr2'
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git fetch --depth=1 origin fix/nested-runtime-dir-path
-          git checkout FETCH_HEAD -- scripts/nested.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -95,7 +84,6 @@ jobs:
       # fails and aborts the Shell).
       - name: Start a system bus
         run: |
-          ls -la /run/systemd 2>/dev/null || true
           rm -rf /run/systemd
           rm -f /usr/share/dbus-1/system-services/org.freedesktop.login1.service
           mkdir -p /run/dbus
@@ -103,10 +91,9 @@ jobs:
           test -S /run/dbus/system_bus_socket
 
       # GNOME Shell starts in the overview, and while the overview is shown
-      # new windows do not get the focus, so `move left` has nothing to move.
-      # (On a fast machine the e2e test happens to win that race.) Keep the
-      # overview hidden while the test runs; the helper sources .sandbox/env,
-      # so scripts/nested.sh reaps it with the other sandbox processes.
+      # new windows do not get the focus, so `move left` has nothing to move
+      # (seen on the hosted runners, not locally). Keep the overview hidden
+      # while the test runs.
       - name: End-to-end test (just e2e)
         run: |
           cat >/tmp/hide-overview.sh <<'EOF'
@@ -122,19 +109,23 @@ jobs:
           done
           EOF
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
-            bash /tmp/hide-overview.sh "$GITHUB_WORKSPACE" &
+            timeout 900 bash /tmp/hide-overview.sh "$GITHUB_WORKSPACE" &
+          helper=$!
+          status=0
           runuser -u "$E2E_USER" -- env -i HOME="$E2E_HOME" PATH="$PATH" \
             USER="$E2E_USER" LOGNAME="$E2E_USER" LANG="$LANG" \
             CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
             XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
             LIBGL_ALWAYS_SOFTWARE=1 \
-            just e2e
+            just e2e || status=$?
+          kill "$helper" 2>/dev/null || true
+          exit "$status"
 
       - name: Upload sandbox logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs-${{ matrix.variant }}
+          name: e2e-logs
           include-hidden-files: true
           if-no-files-found: ignore
           path: |

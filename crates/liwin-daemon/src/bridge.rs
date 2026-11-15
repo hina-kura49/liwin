@@ -151,7 +151,7 @@ impl ShellBridge {
         // The first snapshot after Hello proves the extension is ready to
         // receive signals: send it the keybinding table (unicast).
         if send_keybindings {
-            let table = keybinding_table(&self.shared.options.keybindings);
+            let table = keybinding_table(&self.shared.state().keybindings);
             unicast(conn, peer)?.keybindings_changed(table).await?;
         }
         self.shared.flush_layout(conn).await
@@ -209,18 +209,20 @@ impl ShellBridge {
         #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
-        let Some(binding) = self.shared.options.keybindings.get(binding_id as usize) else {
+        let binding = self
+            .shared
+            .state()
+            .keybindings
+            .get(binding_id as usize)
+            .cloned();
+        let Some(binding) = binding else {
             tracing::warn!(binding_id, "unknown keybinding id");
             return Ok(());
         };
         tracing::debug!(key = %binding.key, "keybinding triggered");
         // Reply right away; the commands may wait for the extension, which
         // must not be blocked on this call.
-        tokio::spawn(
-            self.shared
-                .clone()
-                .run_binding(conn.clone(), binding.clone()),
-        );
+        tokio::spawn(self.shared.clone().run_binding(conn.clone(), binding));
         Ok(())
     }
 
@@ -230,9 +232,10 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
     ) -> Result<(), LiwinError> {
         self.authorize(&hdr)?;
-        let total = self.shared.options.keybindings.len();
+        let st = self.shared.state();
+        let total = st.keybindings.len();
         for &id in &rejected {
-            if let Some(b) = self.shared.options.keybindings.get(id as usize) {
+            if let Some(b) = st.keybindings.get(id as usize) {
                 tracing::warn!(
                     key = %b.key,
                     accelerator = %b.accelerator,

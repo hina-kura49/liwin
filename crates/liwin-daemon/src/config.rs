@@ -134,6 +134,31 @@ pub struct Loaded {
 /// file does not exist.
 pub const BUILTIN: &str = include_str!("default-config.toml");
 
+/// The parts of a config the daemon acts upon.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Settings {
+    /// Keybindings of the `main` mode; a binding's id is its index.
+    pub keybindings: Vec<KeyBinding>,
+    pub layout: LayoutSettings,
+}
+
+impl Loaded {
+    /// Resolves the settings; all warnings (loading and resolving) are
+    /// returned with them.
+    pub fn settings(&self) -> (Settings, Vec<String>) {
+        let mut warnings = self.warnings.clone();
+        let keybindings = self.config.main_bindings(&mut warnings);
+        let layout = self.config.layout_settings(&mut warnings);
+        (
+            Settings {
+                keybindings,
+                layout,
+            },
+            warnings,
+        )
+    }
+}
+
 /// `$XDG_CONFIG_HOME/liwin/liwin.toml`, falling back to `~/.config`.
 pub fn default_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")

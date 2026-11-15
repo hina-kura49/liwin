@@ -12,8 +12,10 @@ pub mod error;
 pub mod exec;
 pub mod model;
 pub mod output;
+pub mod reload;
 pub mod service;
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub use error::LiwinError;
@@ -39,10 +41,13 @@ pub struct Options {
     pub enable_debug_commands: bool,
     /// How long to wait for the extension to acknowledge a command.
     pub request_timeout: Duration,
-    /// Keybindings of the `main` mode, sent to the extension.
+    /// Initial keybindings of the `main` mode, sent to the extension. A
+    /// config reload replaces the daemon's live copy, not this field.
     pub keybindings: Vec<config::KeyBinding>,
-    /// Gaps and default orientation for the tiling layout.
+    /// Initial gaps and default orientation for the tiling layout.
     pub layout: model::LayoutSettings,
+    /// The config file the settings came from, re-read on reload.
+    pub config_path: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -52,6 +57,7 @@ impl Default for Options {
             request_timeout: Duration::from_secs(2),
             keybindings: Vec::new(),
             layout: model::LayoutSettings::default(),
+            config_path: None,
         }
     }
 }

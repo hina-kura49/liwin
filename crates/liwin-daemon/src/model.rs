@@ -120,6 +120,22 @@ impl Model {
         }
     }
 
+    pub fn settings(&self) -> LayoutSettings {
+        self.settings
+    }
+
+    /// Replaces the layout settings. Returns whether they changed; if so,
+    /// every tree is re-laid out with the new gaps. Existing trees keep
+    /// their orientation; a new root orientation applies to new trees.
+    pub fn set_settings(&mut self, settings: LayoutSettings) -> bool {
+        if settings == self.settings {
+            return false;
+        }
+        self.settings = settings;
+        self.dirty.extend(self.trees.keys().copied());
+        true
+    }
+
     pub fn clear(&mut self) {
         self.monitors.clear();
         self.windows.clear();
@@ -440,6 +456,33 @@ mod tests {
             vec![
                 (1, Rect::new(0, 0, 400, 300)),
                 (2, Rect::new(0, 0, 400, 300))
+            ]
+        );
+    }
+
+    #[test]
+    fn new_settings_relayout_every_tree() {
+        let mut m = model();
+        m.sync_windows(None, [win(1, 0), win(2, 1)]);
+        m.take_layout();
+        assert!(!m.set_settings(LayoutSettings::default()));
+        assert!(m.take_layout().is_empty());
+        let gaps = LayoutSettings {
+            outer: OuterGaps {
+                left: 10,
+                top: 10,
+                right: 10,
+                bottom: 10,
+            },
+            ..LayoutSettings::default()
+        };
+        assert!(m.set_settings(gaps));
+        assert_eq!(m.settings(), gaps);
+        assert_eq!(
+            m.take_layout(),
+            vec![
+                (1, Rect::new(10, 10, 980, 480)),
+                (2, Rect::new(10, 10, 980, 480))
             ]
         );
     }

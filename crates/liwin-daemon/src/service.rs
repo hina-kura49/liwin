@@ -15,6 +15,7 @@ use zbus::{Connection, interface};
 
 use crate::bridge::{ShellBridge, ShellBridgeSignals};
 use crate::commands;
+use crate::config::KeyBinding;
 use crate::model::Model;
 use crate::{BUS_NAME, LiwinError, OBJECT_PATH, Options};
 
@@ -28,6 +29,8 @@ pub struct State {
     pub model: Model,
     /// Whether the keybinding table was sent to the current Shell peer.
     pub keybindings_sent: bool,
+    /// Live keybindings of the `main` mode; a binding's id is its index.
+    pub keybindings: Vec<KeyBinding>,
     next_request_id: u32,
     pending: HashMap<u32, oneshot::Sender<RequestResult>>,
 }
@@ -70,16 +73,19 @@ pub(crate) fn unicast(
 /// State shared by both interfaces and background tasks.
 #[derive(Debug)]
 pub struct Shared {
+    /// Startup options. `keybindings` is moved into [`State`] and `layout`
+    /// into the [`Model`], where a config reload updates them.
     pub options: Options,
     state: Mutex<State>,
 }
 
 impl Shared {
-    pub fn new(options: Options) -> Self {
+    pub fn new(mut options: Options) -> Self {
         Self {
             state: Mutex::new(State {
                 shell_peer: None,
                 keybindings_sent: false,
+                keybindings: std::mem::take(&mut options.keybindings),
                 model: Model::new(options.layout),
                 next_request_id: 1,
                 pending: HashMap::new(),
@@ -217,7 +223,15 @@ pub async fn serve(
     builder: zbus::connection::Builder<'_>,
     options: Options,
 ) -> anyhow::Result<Connection> {
-    let shared = Arc::new(Shared::new(options));
+    serve_shared(builder, Arc::new(Shared::new(options))).await
+}
+
+/// Like [`serve`], with state the caller keeps a handle to (e.g. to reload
+/// the config).
+pub async fn serve_shared(
+    builder: zbus::connection::Builder<'_>,
+    shared: Arc<Shared>,
+) -> anyhow::Result<Connection> {
     let conn = builder
         .serve_at(
             OBJECT_PATH,

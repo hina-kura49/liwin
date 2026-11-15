@@ -1,0 +1,22 @@
+version = 1
+SPDX-PackageName = "liwin"
+SPDX-PackageDownloadLocation = "https://github.com/hina-kura49/liwin"
+
+# Source files state their license in an SPDX-License-Identifier header; the
+# annotations below add the copyright notice to them ("aggregate") and cover
+# files that cannot (or do not yet) carry a header, such as JSON, lock files,
+# Markdown and Cargo manifests.
+
+# Everything outside extension/: Rust crates, docs, build and test tooling.
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 hina-kura49"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The GNOME Shell extension. Later annotations take priority over earlier ones.
+[[annotations]]
+path = "extension/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 hina-kura49"
+SPDX-License-Identifier = "GPL-2.0-or-later"

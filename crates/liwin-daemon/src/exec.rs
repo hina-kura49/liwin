@@ -10,7 +10,7 @@ use crate::LiwinError;
 use crate::bridge::ShellBridgeSignals;
 use crate::commands::{self, Command, LayoutChange};
 use crate::config::KeyBinding;
-use crate::model::ALL_WORKSPACES;
+use crate::output;
 use crate::service::Shared;
 
 /// Output of a command that prints nothing.
@@ -36,8 +36,8 @@ impl Shared {
         }
         match command {
             Command::Help => Ok(commands::USAGE.to_owned()),
-            Command::ListWindows => Ok(self.list_windows()),
-            Command::DebugTree => Ok(self.dump_trees()),
+            Command::ListWindows => Ok(output::list_windows(&self.state().model)),
+            Command::DebugTree => Ok(output::dump_trees(&self.state().model)),
             Command::DebugResync => self.debug_resync(conn).await,
             Command::Focus(direction) => self.focus(conn, direction).await,
             Command::Move(direction) => self.move_focused(conn, direction).await,
@@ -178,43 +178,5 @@ impl Shared {
     async fn debug_resync(&self, conn: &Connection) -> Result<String, LiwinError> {
         self.shell_emitter(conn)?.resync_requested().await?;
         done()
-    }
-
-    fn list_windows(&self) -> String {
-        let st = self.state();
-        let m = &st.model;
-        m.windows
-            .values()
-            .map(|w| {
-                let mark = if m.focused == Some(w.id) { "*" } else { " " };
-                let workspace = if w.workspace == ALL_WORKSPACES {
-                    "all".to_owned()
-                } else {
-                    (w.workspace + 1).to_string()
-                };
-                let floating = if w.floating { " floating" } else { "" };
-                format!(
-                    "{mark} {:<12} workspace={workspace} monitor={} {}x{}+{}+{}{floating}",
-                    w.id, w.monitor, w.rect.width, w.rect.height, w.rect.x, w.rect.y
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn dump_trees(&self) -> String {
-        let st = self.state();
-        st.model
-            .trees
-            .iter()
-            .map(|((ws, mon), t)| {
-                format!(
-                    "workspace {} monitor {mon}: {}",
-                    ws.wrapping_add(1),
-                    t.dump()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 }

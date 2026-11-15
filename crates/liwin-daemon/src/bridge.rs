@@ -9,10 +9,10 @@ use zbus::names::{BusName, OwnedUniqueName};
 use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
 
-use crate::commands;
-use crate::model::{WireMonitor, WireWindow};
-use crate::service::Shared;
-use crate::{LiwinError, OBJECT_PATH, PROTOCOL_VERSION, SHELL_IDENTITY_NAME};
+use crate::config::KeyBinding;
+use crate::model::{Model, WireMonitor, WireWindow};
+use crate::service::{Shared, unicast};
+use crate::{LiwinError, PROTOCOL_VERSION, SHELL_IDENTITY_NAME};
 
 pub struct ShellBridge {
     shared: Arc<Shared>,
@@ -25,21 +25,49 @@ impl ShellBridge {
 
     /// Accepts the call only from the Shell peer that completed `Hello`.
     fn authorize(&self, hdr: &Header<'_>) -> Result<OwnedUniqueName, LiwinError> {
-        let sender = hdr
-            .sender()
-            .ok_or_else(|| LiwinError::AccessDenied("message has no sender".into()))?;
+        let sender = sender(hdr)?;
         let st = self.shared.state();
         match &st.shell_peer {
-            Some(peer) if peer.as_str() == sender.as_str() => Ok(peer.clone()),
+            Some(peer) if *peer == sender => Ok(peer.clone()),
             _ => Err(LiwinError::AccessDenied(
                 "only the GNOME Shell peer that called Hello may use this interface".into(),
             )),
         }
     }
+
+    /// Authorizes the call, applies `update` to the model and sends the
+    /// resulting layout changes to the Shell.
+    async fn update_model(
+        &self,
+        hdr: &Header<'_>,
+        conn: &Connection,
+        update: impl FnOnce(&mut Model),
+    ) -> Result<(), LiwinError> {
+        self.authorize(hdr)?;
+        update(&mut self.shared.state().model);
+        self.shared.flush_layout(conn).await
+    }
+}
+
+fn sender(hdr: &Header<'_>) -> Result<OwnedUniqueName, LiwinError> {
+    Ok(hdr
+        .sender()
+        .ok_or_else(|| LiwinError::AccessDenied("message has no sender".into()))?
+        .to_owned()
+        .into())
 }
 
 fn opt_window(id: u64) -> Option<u64> {
     (id != 0).then_some(id)
+}
+
+/// The `KeybindingsChanged` payload: binding ids are indices into `bindings`.
+pub fn keybinding_table(bindings: &[KeyBinding]) -> Vec<(u32, String)> {
+    bindings
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (i as u32, b.accelerator.clone()))
+        .collect()
 }
 
 // `spawn = false`: zbus otherwise runs each call in its own task, which can
@@ -56,17 +84,13 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
         #[zbus(connection)] conn: &Connection,
     ) -> Result<u32, LiwinError> {
-        let sender: OwnedUniqueName = hdr
-            .sender()
-            .ok_or_else(|| LiwinError::AccessDenied("message has no sender".into()))?
-            .to_owned()
-            .into();
+        let sender = sender(&hdr)?;
         let shell_owner = zbus::fdo::DBusProxy::new(conn)
             .await?
             .get_name_owner(BusName::try_from(SHELL_IDENTITY_NAME)?)
             .await
             .map_err(|_| LiwinError::AccessDenied(format!("{SHELL_IDENTITY_NAME} has no owner")))?;
-        if shell_owner.as_str() != sender.as_str() {
+        if shell_owner != sender {
             tracing::warn!(%sender, "rejected Hello from a peer that is not GNOME Shell");
             return Err(LiwinError::AccessDenied(format!(
                 "caller is not the owner of {SHELL_IDENTITY_NAME}"
@@ -102,13 +126,11 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
         #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
-        self.authorize(&hdr)?;
         tracing::debug!(count = monitors.len(), "SyncMonitors");
-        self.shared
-            .state()
-            .model
-            .sync_monitors(monitors.into_iter().map(Into::into));
-        self.shared.flush_layout(conn).await
+        self.update_model(&hdr, conn, |m| {
+            m.sync_monitors(monitors.into_iter().map(Into::into))
+        })
+        .await
     }
 
     async fn sync_windows(
@@ -129,18 +151,8 @@ impl ShellBridge {
         // The first snapshot after Hello proves the extension is ready to
         // receive signals: send it the keybinding table (unicast).
         if send_keybindings {
-            let table: Vec<(u32, String)> = self
-                .shared
-                .options
-                .keybindings
-                .iter()
-                .enumerate()
-                .map(|(i, b)| (i as u32, b.accelerator.clone()))
-                .collect();
-            SignalEmitter::new(conn, OBJECT_PATH)?
-                .set_destination(BusName::Unique(peer.into()))
-                .keybindings_changed(table)
-                .await?;
+            let table = keybinding_table(&self.shared.options.keybindings);
+            unicast(conn, peer)?.keybindings_changed(table).await?;
         }
         self.shared.flush_layout(conn).await
     }
@@ -151,9 +163,8 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
         #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
-        self.authorize(&hdr)?;
-        self.shared.state().model.window_opened(window.into());
-        self.shared.flush_layout(conn).await
+        self.update_model(&hdr, conn, |m| m.window_opened(window.into()))
+            .await
     }
 
     /// A known window changed workspace, monitor or floating state.
@@ -163,9 +174,8 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
         #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
-        self.authorize(&hdr)?;
-        self.shared.state().model.window_opened(window.into());
-        self.shared.flush_layout(conn).await
+        self.update_model(&hdr, conn, |m| m.window_opened(window.into()))
+            .await
     }
 
     async fn window_closed(
@@ -174,9 +184,8 @@ impl ShellBridge {
         #[zbus(header)] hdr: Header<'_>,
         #[zbus(connection)] conn: &Connection,
     ) -> Result<(), LiwinError> {
-        self.authorize(&hdr)?;
-        self.shared.state().model.window_closed(window_id);
-        self.shared.flush_layout(conn).await
+        self.update_model(&hdr, conn, |m| m.window_closed(window_id))
+            .await
     }
 
     async fn focus_changed(
@@ -207,21 +216,11 @@ impl ShellBridge {
         tracing::debug!(key = %binding.key, "keybinding triggered");
         // Reply right away; the commands may wait for the extension, which
         // must not be blocked on this call.
-        let shared = self.shared.clone();
-        let conn = conn.clone();
-        let binding = binding.clone();
-        tokio::spawn(async move {
-            for args in &binding.commands {
-                let result = match commands::parse(args) {
-                    Ok(command) => shared.run(&conn, command).await,
-                    Err(e) => Err(LiwinError::InvalidCommand(e)),
-                };
-                if let Err(e) = result {
-                    tracing::warn!(key = %binding.key, command = %args.join(" "), "keybinding command failed: {e:?}");
-                    break;
-                }
-            }
-        });
+        tokio::spawn(
+            self.shared
+                .clone()
+                .run_binding(conn.clone(), binding.clone()),
+        );
         Ok(())
     }
 

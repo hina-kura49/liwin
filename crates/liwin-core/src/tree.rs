@@ -5,10 +5,17 @@
 //! vertical) and whose leaves are windows. The root is always a container and
 //! is never removed, even when empty.
 //!
-//! Invariants maintained after every public operation:
-//! - every non-root container has at least two children (normalization);
+//! Invariants maintained after every public operation (checked by
+//! [`Tree::check_invariants`]):
+//! - every non-root container has at least two children (normalization),
+//!   except a *pending split*: [`Tree::split`] wraps the focused window
+//!   alone in a container so the next window lands next to it. A lone child
+//!   is therefore always a window, never a container;
 //! - the root never has a single child that is itself a container;
-//! - `focused` is `Some` iff the tree contains at least one window.
+//! - parent links match child lists, every live node is reachable from the
+//!   root exactly once, and every window is indexed;
+//! - `focused` is `Some` iff the tree contains at least one window, and then
+//!   points to one of its windows.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -388,6 +395,98 @@ impl Tree {
         s
     }
 
+    /// Verifies the structural invariants listed in the module documentation
+    /// and returns a description of the first violation found.
+    ///
+    /// Meant for tests (including other crates' tests); it walks the whole
+    /// arena, so it is not free.
+    #[doc(hidden)]
+    pub fn check_invariants(&self) -> Result<(), String> {
+        let Some(root_node) = self.nodes.get(self.root.0).and_then(Option::as_ref) else {
+            return Err("root slot is empty".into());
+        };
+        if root_node.parent.is_some() {
+            return Err("root has a parent".into());
+        }
+        if !self.is_container(self.root) {
+            return Err("root is not a container".into());
+        }
+        if let [only] = self.children(self.root)
+            && self.is_container(*only)
+        {
+            return Err(format!(
+                "root has a single container child: {}",
+                self.dump()
+            ));
+        }
+
+        let mut seen = vec![false; self.nodes.len()];
+        let mut stack = vec![self.root];
+        let mut window_count = 0;
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id.0).and_then(Option::as_ref) else {
+                return Err(format!("dangling node id {}", id.0));
+            };
+            if std::mem::replace(&mut seen[id.0], true) {
+                return Err(format!("node {} is reachable twice", id.0));
+            }
+            match &node.kind {
+                Kind::Window(w) => {
+                    window_count += 1;
+                    if self.windows.get(w) != Some(&id) {
+                        return Err(format!("window {w} is not indexed at node {}", id.0));
+                    }
+                }
+                Kind::Container { children, .. } => {
+                    if id != self.root {
+                        match children.as_slice() {
+                            [] => return Err(format!("empty non-root container {}", id.0)),
+                            [only] if self.is_container(*only) => {
+                                return Err(format!(
+                                    "container {} wraps a lone container: {}",
+                                    id.0,
+                                    self.dump()
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    for &c in children {
+                        match self.nodes.get(c.0).and_then(Option::as_ref) {
+                            Some(child) if child.parent == Some(id) => stack.push(c),
+                            Some(_) => {
+                                return Err(format!("node {} has a wrong parent link", c.0));
+                            }
+                            None => return Err(format!("dangling child id {}", c.0)),
+                        }
+                    }
+                }
+            }
+        }
+        if window_count != self.windows.len() {
+            return Err(format!(
+                "{window_count} windows reachable, {} indexed",
+                self.windows.len()
+            ));
+        }
+        for (slot, node) in self.nodes.iter().enumerate() {
+            let free = self.free.contains(&slot);
+            match (node.is_some(), free, seen[slot]) {
+                (true, false, true) | (false, true, false) => {}
+                _ => return Err(format!("slot {slot} leaked or double-freed")),
+            }
+        }
+        match self.focused {
+            None if !self.windows.is_empty() => Err("no focus in a non-empty tree".into()),
+            None => Ok(()),
+            Some(f) if !seen.get(f.0).copied().unwrap_or(false) => {
+                Err(format!("focus points to unreachable node {}", f.0))
+            }
+            Some(f) if self.is_container(f) => Err("focus points to a container".into()),
+            Some(_) => Ok(()),
+        }
+    }
+
     // ----- internals -------------------------------------------------------
 
     fn alloc(&mut self, node: Node) -> NodeId {
@@ -621,6 +720,9 @@ impl Tree {
         }
     }
 }
+
+#[cfg(test)]
+mod proptests;
 
 #[cfg(test)]
 mod tests {

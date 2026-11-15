@@ -3,6 +3,7 @@ name = "liwin-core"
 description = "Window tree and layout computation for liwin (no GNOME / D-Bus dependencies)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

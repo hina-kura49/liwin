@@ -140,7 +140,7 @@ and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Author
 
-Made by hina-kura49 —
+Made by kura —
 [GitHub](https://github.com/hina-kura49) ·
 [Portfolio](https://hina-kura49.github.io/portfolio/) ·
 [X](https://x.com/hkurashina49) ·

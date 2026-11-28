@@ -1,8 +1,13 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Builds the release assets:
 #   liwin-<version>-<target>.tar.gz  (liwin, liwin-daemon, README, licenses)
+#   liwin-linux-<arch>.tar.gz        (same file under a version-less name)
 #   liwin@kura.shell-extension.zip   (layout of `gnome-extensions pack`)
+#   install.sh                       (scripts/install.sh)
 #   SHA256SUMS
+# The version-less names keep
+# https://github.com/hina-kura49/liwin/releases/latest/download/<name> stable
+# for the product page and install.sh.
 # and, when given a tag, attests their build provenance and uploads them to
 # that GitHub release.
 #
@@ -34,6 +39,7 @@ on:
       - Cargo.lock
       - crates/**
       - extension/**
+      - scripts/install.sh
 
 permissions: {}
 
@@ -108,11 +114,14 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            arch: x86_64
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
+            arch: aarch64
             runner: ubuntu-24.04-arm
     env:
       TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
@@ -146,6 +155,7 @@ jobs:
           epoch=$(git log -1 --format=%ct)
           tar -C target/dist-stage --sort=name --owner=0 --group=0 --numeric-owner \
             --mtime="@$epoch" -cf - "$name" | gzip -9n >"target/dist/$name.tar.gz"
+          cp "target/dist/$name.tar.gz" "target/dist/liwin-linux-$ARCH.tar.gz"
           tar -tvzf "target/dist/$name.tar.gz"
 
       - uses: actions/upload-artifact@v7
@@ -200,6 +210,7 @@ jobs:
           assert meta["uuid"] == "liwin@kura", meta
           assert meta["version-name"] == os.environ["VERSION"], meta
           '
+          install -m 755 scripts/install.sh target/dist/install.sh
 
       - uses: actions/upload-artifact@v7
         with:
@@ -223,10 +234,13 @@ jobs:
       - name: SHA256SUMS
         working-directory: dist
         run: |
-          sha256sum -- *.tar.gz *.zip >SHA256SUMS
+          sha256sum -- *.tar.gz *.zip install.sh >SHA256SUMS
           cat SHA256SUMS
           sha256sum -c SHA256SUMS
-          test "$(wc -l <SHA256SUMS)" -eq 3
+          test "$(wc -l <SHA256SUMS)" -eq 6
+          for f in liwin-linux-x86_64.tar.gz liwin-linux-aarch64.tar.gz liwin@kura.shell-extension.zip install.sh; do
+            test -f "$f"
+          done
 
       - uses: actions/upload-artifact@v7
         with:

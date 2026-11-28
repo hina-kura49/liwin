@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/hina-kura49/liwin/compare/v1.0.0...v1.0.1) (2026-11-28)
+
+
+### Documentation
+
+* link the author's social accounts on the product page and README ([#22](https://github.com/hina-kura49/liwin/issues/22)) ([adbdbb2](https://github.com/hina-kura49/liwin/commit/adbdbb23fde632eb835641aa1a07f4a1fade326b))
+
 ## [1.0.0](https://github.com/hina-kura49/liwin/compare/v0.2.0...v1.0.0) (2026-11-28)
 
 

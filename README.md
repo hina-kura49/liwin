@@ -3,9 +3,29 @@
 An AeroSpace-like (i3-style) tiling workflow for GNOME on Wayland, running on
 top of the stock GNOME Shell.
 
+<p align="center">
+  <img src="docs/images/demo.gif" width="960" alt="Illustration: new windows on a GNOME desktop are tiled automatically next to each other, then focused, moved and resized from the keyboard">
+</p>
+<p align="center"><sub>Illustration of the workflow. The key names are examples; bindings are set in <code>liwin.toml</code>.</sub></p>
+
+## Features
+
+- **Automatic tiling.** Windows are tiled per GNOME workspace and monitor as
+  they open and close — no manual arranging.
+- **Keyboard-driven.** Focus, move, layout and workspace commands, bound to
+  keys in an AeroSpace-style config.
+- **Plays nice with GNOME.** Runs on top of the stock GNOME Shell. Keys
+  already used by GNOME are skipped, never stolen.
+- **Scriptable.** Everything goes through a D-Bus service, so the `liwin`
+  command (and your own scripts) can drive it.
+
+## Status
+
 > Status: early. Windows are tiled automatically per GNOME workspace and
 > monitor; focus/move/layout/workspace commands and keybindings work. Test it
 > in the nested Shell (`just nested`) before using it on your real desktop.
+
+## Project layout
 
 - `crates/liwin-core` — pure window tree + layout logic (no GNOME, no D-Bus)
 - `crates/liwin-daemon` — D-Bus service (`io.github.liwin.Daemon`) and config

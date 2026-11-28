@@ -138,6 +138,15 @@ protocol are described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md),
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/dbus.md](docs/dbus.md)
 and [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Author
+
+Made by hina-kura49 —
+[GitHub](https://github.com/hina-kura49) ·
+[Portfolio](https://hina-kura49.github.io/portfolio/) ·
+[X](https://x.com/hkurashina49) ·
+[Instagram](https://www.instagram.com/hina_kura49/) ·
+[Facebook](https://www.facebook.com/profile.php?id=61597175063829)
+
 ## License
 
 liwin is made of parts under different licenses:

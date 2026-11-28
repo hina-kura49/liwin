@@ -1,0 +1,247 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>liwin — i3 / AeroSpace-style tiling for GNOME on Wayland</title>
+  <meta name="description" content="liwin tiles your windows automatically on the stock GNOME Shell, i3 and AeroSpace style. Keyboard-driven, scriptable over D-Bus, free and open source.">
+  <link rel="canonical" href="https://hina-kura49.github.io/liwin/">
+  <link rel="icon" href="assets/liwin-icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#e95420">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="liwin">
+  <meta property="og:title" content="liwin — tiling windows for GNOME on Wayland">
+  <meta property="og:description" content="i3 / AeroSpace-style automatic tiling on top of the stock GNOME Shell. Keyboard-driven, scriptable, free and open source.">
+  <meta property="og:url" content="https://hina-kura49.github.io/liwin/">
+  <meta property="og:image" content="https://hina-kura49.github.io/liwin/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="liwin: i3 / AeroSpace-style tiling for GNOME on Wayland">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:creator" content="@hkurashina49">
+  <meta name="twitter:title" content="liwin — tiling windows for GNOME on Wayland">
+  <meta name="twitter:description" content="i3 / AeroSpace-style automatic tiling on top of the stock GNOME Shell. Free and open source.">
+  <meta name="twitter:image" content="https://hina-kura49.github.io/liwin/assets/og.png">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="liwin home">
+        <img src="assets/liwin-icon.svg" alt="" width="32" height="32">
+        <span>liwin</span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#use-cases">Use cases</a>
+        <a href="#features">Features</a>
+        <a href="#keys">Keys</a>
+        <a href="#install">Install</a>
+        <a href="#faq">FAQ</a>
+        <a class="nav-gh" href="https://github.com/hina-kura49/liwin">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">v1.0 · Free &amp; open source · GNOME on Wayland</p>
+          <h1>Tiling windows for GNOME, <span class="accent">without leaving GNOME.</span></h1>
+          <p class="lead">
+            liwin brings the i3 / AeroSpace way of working to the stock GNOME Shell:
+            windows tile themselves as they open, and you focus, move and re-arrange
+            them from the keyboard. No new desktop, no new session.
+          </p>
+          <div class="cta">
+            <a class="btn btn-primary" href="#install">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1Zm-8 15a1 1 0 0 1 1 1v1h14v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/></svg>
+              Download for Linux
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/hina-kura49/liwin">
+              <svg aria-hidden="true" viewBox="0 0 16 16" width="18" height="18"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+              View on GitHub
+            </a>
+          </div>
+          <p class="fineprint">x86_64 &amp; aarch64 · GNOME Shell 50 · MIT / Apache-2.0 &amp; GPL-2.0+</p>
+        </div>
+        <figure class="hero-media">
+          <video autoplay muted loop playsinline preload="metadata" poster="assets/liwin-demo-poster.jpg" width="1920" height="1080" aria-label="Illustration of liwin tiling windows on a GNOME desktop">
+            <source src="assets/liwin-demo.mp4" type="video/mp4">
+          </video>
+          <figcaption>Illustration of the workflow, not a screen recording.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="use-cases" class="section">
+      <div class="wrap">
+        <h2>When you'll use it</h2>
+        <p class="section-lead">liwin is for people who think in keys, not in drag handles.</p>
+        <div class="cards">
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">↩</div>
+            <h3>You came from i3, sway or AeroSpace</h3>
+            <p>You miss tiling, but you want to keep stock Ubuntu or Fedora GNOME — its settings, notifications, screen sharing and updates. Install liwin and keep your muscle memory: the default keys follow AeroSpace (<kbd>Alt</kbd>+<kbd>H/J/K/L</kbd>).</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">⌨</div>
+            <h3>A coding layout without dragging</h3>
+            <p>Open your editor, a terminal and a browser — they split the screen on their own. <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> pushes the terminal right, <kbd>Alt</kbd>+<kbd>/</kbd> flips the split from side-by-side to stacked. One key, no mouse.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">▣▣</div>
+            <h3>Several monitors, several workspaces</h3>
+            <p>Every GNOME workspace on every monitor gets its own tiling. Keep chat on workspace 3 and docs on 2; <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> jumps there, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd> sends the focused window along.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">$_</div>
+            <h3>Scripting your desk</h3>
+            <p>Everything goes through a D-Bus service. Call <code>liwin focus left</code> or <code>liwin move-node-to-workspace 2</code> from a shell script, a GNOME custom shortcut or <code>busctl</code>, and build the layout you want after <code>git clone</code>.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section section-tint">
+      <div class="wrap">
+        <h2>Features</h2>
+        <div class="features">
+          <div class="feature">
+            <h3>Automatic tiling</h3>
+            <p>Windows are tiled per GNOME workspace and monitor as they open and close. Dialogs and fixed-size windows float.</p>
+          </div>
+          <div class="feature">
+            <h3>Keyboard-driven</h3>
+            <p>Focus, move, layout and workspace commands, bound in an AeroSpace-style <code>liwin.toml</code>. Works with no config at all.</p>
+          </div>
+          <div class="feature">
+            <h3>Plays nice with GNOME</h3>
+            <p>Runs on top of the stock GNOME Shell. Keys GNOME already uses are skipped and logged, never stolen.</p>
+          </div>
+          <div class="feature">
+            <h3>Scriptable</h3>
+            <p>A documented D-Bus API (<code>io.github.liwin.Daemon1</code>) and the <code>liwin</code> command share one command language.</p>
+          </div>
+          <div class="feature">
+            <h3>Small and safe</h3>
+            <p>The tiling logic lives in a Rust daemon; the Shell extension is a thin layer. Window titles and app ids never leave the Shell.</p>
+          </div>
+          <div class="feature">
+            <h3>Free &amp; open source</h3>
+            <p>Daemon and CLI under MIT or Apache-2.0, the extension under GPL-2.0-or-later. Signed build provenance on every release.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="keys" class="section">
+      <div class="wrap narrow">
+        <h2>Default keybindings</h2>
+        <p class="section-lead">Built in, so liwin works right after install. Put your own in <code>~/.config/liwin/liwin.toml</code> (AeroSpace key names).</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+            <tbody>
+              <tr><td><kbd>Alt</kbd>+<kbd>H</kbd> / <kbd>J</kbd> / <kbd>K</kbd> / <kbd>L</kbd></td><td>Focus the window left / down / up / right</td></tr>
+              <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> / <kbd>J</kbd> / <kbd>K</kbd> / <kbd>L</kbd></td><td>Move the focused window left / down / up / right</td></tr>
+              <tr><td><kbd>Alt</kbd>+<kbd>/</kbd></td><td>Toggle the split between horizontal and vertical</td></tr>
+              <tr><td><kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd></td><td>Switch to workspace 1 … 9</td></tr>
+              <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd> … <kbd>9</kbd></td><td>Move the focused window to workspace 1 … 9</td></tr>
+            </tbody>
+          </table>
+        </div>
+<pre class="code"><code><span class="c"># ~/.config/liwin/liwin.toml — replaces the built-in keys</span>
+config-version = 2
+
+[mode.main.binding]
+alt-h = 'focus left'
+alt-shift-l = 'move right'
+alt-slash = 'layout tiles horizontal vertical'
+alt-1 = 'workspace 1'</code></pre>
+      </div>
+    </section>
+
+    <section id="install" class="section section-dark">
+      <div class="wrap narrow">
+        <h2>Install</h2>
+        <p class="section-lead">Needs GNOME Shell 50 on Wayland (Ubuntu, Fedora, Arch, …), x86_64 or aarch64. Installs for your user only — no root.</p>
+
+        <h3>One-liner</h3>
+<pre class="code"><code>curl -fsSL https://github.com/hina-kura49/liwin/releases/latest/download/install.sh | bash</code></pre>
+        <p>It downloads the latest release, checks <code>SHA256SUMS</code>, puts <code>liwin</code> and <code>liwin-daemon</code> in <code>~/.local/bin</code>, installs the extension, and adds a systemd user unit that starts the daemon with your session. Then <strong>log out and back in</strong>.</p>
+
+        <h3>Downloads</h3>
+        <ul class="downloads">
+          <li><a href="https://github.com/hina-kura49/liwin/releases/latest/download/liwin-linux-x86_64.tar.gz">liwin-linux-x86_64.tar.gz</a> <span>daemon + CLI, Intel / AMD</span></li>
+          <li><a href="https://github.com/hina-kura49/liwin/releases/latest/download/liwin-linux-aarch64.tar.gz">liwin-linux-aarch64.tar.gz</a> <span>daemon + CLI, ARM64</span></li>
+          <li><a href="https://github.com/hina-kura49/liwin/releases/latest/download/liwin@kura.shell-extension.zip">liwin@kura.shell-extension.zip</a> <span>GNOME Shell extension</span></li>
+          <li><a href="https://github.com/hina-kura49/liwin/releases/latest/download/SHA256SUMS">SHA256SUMS</a> <span>checksums</span></li>
+        </ul>
+
+        <h3>Manual install</h3>
+<pre class="code"><code><span class="c"># 1. daemon + CLI</span>
+tar -xzf liwin-linux-x86_64.tar.gz
+install -m 755 liwin-*/liwin liwin-*/liwin-daemon ~/.local/bin/
+
+<span class="c"># 2. extension</span>
+gnome-extensions install --force liwin@kura.shell-extension.zip
+
+<span class="c"># 3. log out and back in, then</span>
+gnome-extensions enable liwin@kura
+liwin-daemon &amp;   <span class="c"># or start it from a systemd user unit</span></code></pre>
+        <p>You can also turn the extension on and off in the <em>Extensions</em> app. Remove everything with <code>curl -fsSL https://github.com/hina-kura49/liwin/releases/latest/download/install.sh | bash -s -- --uninstall</code>.</p>
+      </div>
+    </section>
+
+    <section id="faq" class="section">
+      <div class="wrap narrow">
+        <h2>FAQ</h2>
+        <details>
+          <summary>Which GNOME versions are supported?</summary>
+          <p>GNOME Shell 50 on Wayland. The extension declares <code>shell-version: ["50"]</code>; other versions are not tested yet. X11 sessions are not supported.</p>
+        </details>
+        <details>
+          <summary>Is this a new window manager or a new session?</summary>
+          <p>No. You keep the stock GNOME Shell and log in as usual. A small extension reports windows and moves them; the tiling decisions are made by <code>liwin-daemon</code>, a separate program that talks to it over D-Bus.</p>
+        </details>
+        <details>
+          <summary>Will it break my GNOME shortcuts?</summary>
+          <p>No. Keys already taken by GNOME are skipped and reported in the daemon log (<code>journalctl --user -u liwin</code>), never stolen. Choose other keys in <code>liwin.toml</code>.</p>
+        </details>
+        <details>
+          <summary>How is it different from Pop Shell or Forge?</summary>
+          <p>liwin follows i3 / AeroSpace semantics and config, keeps the extension minimal, and puts the logic in a tested Rust daemon you can drive from scripts over D-Bus.</p>
+        </details>
+        <details>
+          <summary>Nothing happens after installing.</summary>
+          <p>Log out and back in first: GNOME on Wayland only loads new extensions at login. Then check <code>gnome-extensions info liwin@kura</code> (should be <em>ENABLED</em>) and <code>systemctl --user status liwin</code>.</p>
+        </details>
+        <details>
+          <summary>Does liwin collect any data?</summary>
+          <p>No. Nothing leaves your machine, and window titles and app ids are not even sent to the daemon.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div class="brand">
+        <img src="assets/liwin-icon.svg" alt="" width="28" height="28">
+        <span>liwin</span>
+      </div>
+      <nav aria-label="Links">
+        <a href="https://github.com/hina-kura49/liwin">GitHub</a>
+        <a href="https://github.com/hina-kura49/liwin/releases/latest">Releases</a>
+        <a href="https://hina-kura49.github.io/portfolio/">Portfolio</a>
+        <a href="https://x.com/hkurashina49">X (@hkurashina49)</a>
+      </nav>
+      <p class="muted">© 2026 hina-kura49 · Not affiliated with GNOME, Canonical or AeroSpace.</p>
+    </div>
+  </footer>
+</body>
+</html>

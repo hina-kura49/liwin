@@ -152,7 +152,7 @@ details p { margin: 12px 0 0; color: var(--muted); }
 /* footer */
 .footer { border-top: 1px solid var(--line); padding: 36px 0 44px; background: var(--tint); }
 .footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; }
-.footer nav { display: flex; flex-wrap: wrap; gap: 22px; }
+.footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
 .footer nav a { color: var(--ink); text-decoration: none; }
 .footer nav a:hover { color: var(--orange); }
 .muted { color: var(--muted); font-size: .85rem; margin: 0; width: 100%; }
